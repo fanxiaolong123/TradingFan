@@ -19,8 +19,8 @@ data_sources:
     enabled: true                       # 是否启用
     api_key: ""                        # API密钥（请在secrets.yml中配置）
     api_secret: ""                     # API密钥（请在secrets.yml中配置）
-    testnet: false                     # 是否使用测试网
-    base_url: "https://api.binance.com" # API基础URL
+    testnet: true                      # 是否使用测试网
+    base_url: "https://testnet.binance.vision" # 测试网API基础URL
     timeout: 30                        # 请求超时时间（秒）
     retry_times: 3                     # 重试次数
     

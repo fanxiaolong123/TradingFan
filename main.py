@@ -116,7 +116,9 @@ class TradingSystem:
         if binance_config.get('enabled', True):
             binance_provider = BinanceDataProvider(
                 api_key=binance_config.get('api_key'),
-                api_secret=binance_config.get('api_secret')
+                api_secret=binance_config.get('api_secret'),
+                base_url=binance_config.get('base_url', 'https://api.binance.com'),
+                testnet=binance_config.get('testnet', False)
             )
             self.data_manager.add_provider('binance', binance_provider, is_default=True)
             self.logger.info("✅ Binance数据提供者已添加")

@@ -494,17 +494,19 @@ class AccountManager:
         """记录每日账户价值"""
         total_value = self._calculate_total_value_usdt()
         
+        # 使用isoformat()确保date可以被JSON序列化
+        today = datetime.now().date()
         daily_record = {
-            'date': datetime.now().date(),
+            'date': today.isoformat(),  # 转换为字符串格式
             'total_value': total_value,
             'total_pnl': total_value - self.initial_value_usdt,
             'positions': len(self.positions),
             'trades_count': len(self.trades)
         }
         
-        # 检查是否已有今日记录
-        today = datetime.now().date()
-        existing_record = next((record for record in self.daily_values if record['date'] == today), None)
+        # 检查是否已有今日记录（比较字符串格式的日期）
+        today_str = today.isoformat()
+        existing_record = next((record for record in self.daily_values if record['date'] == today_str), None)
         
         if existing_record:
             # 更新今日记录

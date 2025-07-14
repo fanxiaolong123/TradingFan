@@ -72,8 +72,8 @@ Thumbs.db
 
 # 项目特定文件
 # 配置文件（包含敏感信息）
-config/secrets.yml
-config/api_keys.yml
+secrets.yml
+api_keys.yml
 *.env.local
 *.env.production
 

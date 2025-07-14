@@ -260,7 +260,17 @@ class ConfigManager:
         if name is None:
             name = self.get('data_sources.default', 'binance')
         
-        return self.get(f'data_sources.{name}', {})
+        # 从config.yml获取基础配置
+        config_data = self._get_nested_value(self.config, f'data_sources.{name}') or {}
+        
+        # 从secrets.yml获取敏感信息
+        secrets_data = self._get_nested_value(self.secrets, f'data_sources.{name}') or {}
+        
+        # 合并配置，secrets中的值会覆盖config中的值
+        merged_config = config_data.copy()
+        merged_config.update(secrets_data)
+        
+        return merged_config
     
     def get_strategy_config(self, name: str) -> Dict[str, Any]:
         """

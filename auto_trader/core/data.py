@@ -137,27 +137,92 @@ class DataProvider(ABC):
 class BinanceDataProvider(DataProvider):
     """币安数据提供者"""
     
-    def __init__(self, api_key: Optional[str] = None, api_secret: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, api_secret: Optional[str] = None, 
+                 base_url: str = "https://api.binance.com", testnet: bool = False):
         """
         初始化币安数据提供者
         
         Args:
             api_key: API密钥（可选，用于获取更高频率限制）
             api_secret: API密钥（可选）
+            base_url: API基础URL（默认为主网）
+            testnet: 是否使用测试网络（默认为False）
         """
         if not BINANCE_AVAILABLE:
             print("警告: python-binance 库未安装，将使用REST API方式")
         
         self.api_key = api_key
         self.api_secret = api_secret
+        self.base_url = base_url  # 存储API基础URL
+        self.testnet = testnet    # 存储测试网络标志
         
-        # 初始化币安客户端
-        if BINANCE_AVAILABLE and api_key:
-            self.client = Client(api_key=api_key, api_secret=api_secret)
-        else:
-            self.client = None
+        # 不立即初始化Client，避免启动时的API调用
+        # 延迟到实际需要时再初始化
+        self.client = None
+        self._client_initialized = False
         
         # WebSocket管理器
+        self.socket_manager = None
+        self.active_streams: Dict[str, Any] = {}  # 活跃的数据流
+        
+        # 时间间隔映射
+        if BINANCE_AVAILABLE and Client:
+            self.interval_map = {
+                '1m': Client.KLINE_INTERVAL_1MINUTE,
+                '3m': Client.KLINE_INTERVAL_3MINUTE,
+                '5m': Client.KLINE_INTERVAL_5MINUTE,
+                '15m': Client.KLINE_INTERVAL_15MINUTE,
+                '30m': Client.KLINE_INTERVAL_30MINUTE,
+                '1h': Client.KLINE_INTERVAL_1HOUR,
+                '2h': Client.KLINE_INTERVAL_2HOUR,
+                '4h': Client.KLINE_INTERVAL_4HOUR,
+                '6h': Client.KLINE_INTERVAL_6HOUR,
+                '8h': Client.KLINE_INTERVAL_8HOUR,
+                '12h': Client.KLINE_INTERVAL_12HOUR,
+                '1d': Client.KLINE_INTERVAL_1DAY,
+                '3d': Client.KLINE_INTERVAL_3DAY,
+                '1w': Client.KLINE_INTERVAL_1WEEK,
+                '1M': Client.KLINE_INTERVAL_1MONTH
+            }
+        else:
+            # 备用映射（直接使用字符串）
+            self.interval_map = {
+                '1m': '1m',
+                '3m': '3m',
+                '5m': '5m',
+                '15m': '15m',
+                '30m': '30m',
+                '1h': '1h',
+                '2h': '2h',
+                '4h': '4h',
+                '6h': '6h',
+                '8h': '8h',
+                '12h': '12h',
+                '1d': '1d',
+                '3d': '3d',
+                '1w': '1w',
+                '1M': '1M'
+            }
+    
+    def _initialize_client(self) -> None:
+        """延迟初始化币安客户端"""
+        if self._client_initialized:
+            return
+            
+        if BINANCE_AVAILABLE and self.api_key:
+            try:
+                # 根据testnet参数选择不同的客户端配置
+                if self.testnet:
+                    self.client = Client(api_key=self.api_key, api_secret=self.api_secret, testnet=True)
+                    print("初始化测试网Client成功")
+                else:
+                    self.client = Client(api_key=self.api_key, api_secret=self.api_secret)
+                    print("初始化主网Client成功")
+            except Exception as e:
+                print(f"Client初始化失败，将使用REST API: {e}")
+                self.client = None
+        
+        self._client_initialized = True
         self.socket_manager = None
         self.active_streams: Dict[str, Any] = {}  # 活跃的数据流
         
@@ -213,6 +278,9 @@ class BinanceDataProvider(DataProvider):
             if not binance_interval:
                 raise ValueError(f"不支持的时间间隔: {interval}")
             
+            # 延迟初始化Client（如果需要）
+            self._initialize_client()
+            
             # 使用公共接口获取数据（无需API密钥）
             if self.client:
                 # 有API密钥，使用官方客户端
@@ -226,6 +294,10 @@ class BinanceDataProvider(DataProvider):
             else:
                 # 无API密钥，使用REST API
                 klines = self._get_klines_rest(symbol, binance_interval, start_time, end_time, limit)
+            
+            if not klines:
+                print(f"警告: 未获取到 {symbol} 的历史数据")
+                return pd.DataFrame()
             
             # 转换为DataFrame
             df = pd.DataFrame(klines, columns=[
@@ -259,11 +331,18 @@ class BinanceDataProvider(DataProvider):
     def _get_klines_rest(self, symbol: str, interval: str, start_time: Optional[datetime], 
                         end_time: Optional[datetime], limit: int) -> List[List]:
         """使用REST API获取K线数据"""
-        url = "https://api.binance.com/api/v3/klines"
+        import time
+        
+        # 使用配置的base_url构建完整的API端点URL
+        url = f"{self.base_url}/api/v3/klines"
+        
+        # 限制每次请求的数量，避免触发限制
+        actual_limit = min(limit, 500)
+        
         params = {
             'symbol': symbol,
             'interval': interval,
-            'limit': limit
+            'limit': actual_limit
         }
         
         if start_time:
@@ -271,22 +350,58 @@ class BinanceDataProvider(DataProvider):
         if end_time:
             params['endTime'] = int(end_time.timestamp() * 1000)
         
-        response = requests.get(url, params=params)
-        response.raise_for_status()
+        # 添加请求头以避免418错误
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive'
+        }
         
-        return response.json()
+        # 如果有API密钥，添加到请求头中（用于提高请求限制）
+        if self.api_key:
+            headers['X-MBX-APIKEY'] = self.api_key
+        
+        # 添加延时避免频率限制
+        time.sleep(0.1)
+        
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"API请求失败: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"响应状态码: {e.response.status_code}")
+                print(f"响应内容: {e.response.text}")
+            raise
     
     def get_latest_price(self, symbol: str) -> float:
         """获取最新价格"""
         try:
+            # 尝试延迟初始化Client
+            self._initialize_client()
+            
             if self.client:
                 ticker = self.client.get_symbol_ticker(symbol=symbol)
                 return float(ticker['price'])
             else:
-                # 使用REST API
-                url = f"https://api.binance.com/api/v3/ticker/price"
+                # 使用REST API，使用配置的base_url
+                url = f"{self.base_url}/api/v3/ticker/price"
                 params = {'symbol': symbol}
-                response = requests.get(url, params=params)
+                
+                # 添加请求头
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                    'Accept': 'application/json'
+                }
+                
+                # 如果有API密钥，添加到请求头中
+                if self.api_key:
+                    headers['X-MBX-APIKEY'] = self.api_key
+                
+                response = requests.get(url, params=params, headers=headers, timeout=30)
                 response.raise_for_status()
                 data = response.json()
                 return float(data['price'])
