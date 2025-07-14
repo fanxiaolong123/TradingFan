@@ -1,0 +1,138 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-trader"
+version = "0.1.0"
+description = "全球顶尖的量化自动交易系统"
+authors = [
+    {name = "TradingFan", email = "trading@fan.com"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+keywords = ["trading", "quantitative", "crypto", "binance", "strategy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+# 项目依赖
+dependencies = [
+    # 数据处理和分析
+    "pandas>=1.5.0",
+    "numpy>=1.21.0",
+    
+    # 交易所API
+    "python-binance>=1.0.16",
+    "ccxt>=4.0.0",
+    
+    # 可视化
+    "matplotlib>=3.5.0",
+    "plotly>=5.0.0",
+    
+    # Web框架（后期UI使用）
+    "streamlit>=1.25.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    
+    # 配置文件处理
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    
+    # 日志和工具
+    "loguru>=0.7.0",
+    "requests>=2.28.0",
+    
+    # 异步处理
+    "asyncio>=3.4.3",
+    "websocket-client>=1.6.0",
+    
+    # 技术指标计算
+    "ta-lib>=0.4.25",  # 需要单独安装TA-Lib库
+    "pandas-ta>=0.3.14b",
+    
+    # 数据验证
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+# 开发依赖
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+
+# 测试依赖
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/fanxiaolong/auto-trader"
+Repository = "https://github.com/fanxiaolong/auto-trader"
+Documentation = "https://github.com/fanxiaolong/auto-trader/wiki"
+Issues = "https://github.com/fanxiaolong/auto-trader/issues"
+
+[project.scripts]
+# 命令行入口
+auto-trader = "auto_trader.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["auto_trader*"]
+
+[tool.black]
+# 代码格式化配置
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # 排除的目录
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+# 类型检查配置
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+# 测试配置
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "--cov=auto_trader",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]

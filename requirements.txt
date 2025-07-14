@@ -1,0 +1,40 @@
+# 核心数据处理
+pandas>=1.5.0
+numpy>=1.21.0
+
+# 交易所API
+python-binance>=1.0.16
+ccxt>=4.0.0
+
+# 可视化
+matplotlib>=3.5.0
+plotly>=5.0.0
+
+# Web框架
+streamlit>=1.25.0
+fastapi>=0.100.0
+uvicorn>=0.20.0
+
+# 配置文件
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# 日志
+loguru>=0.7.0
+requests>=2.28.0
+
+# 异步处理
+websocket-client>=1.6.0
+
+# 技术指标
+pandas-ta>=0.3.14b
+TA-Lib>=0.6.0
+
+# 数据验证
+pydantic>=2.0.0
+
+# 时区处理
+pytz>=2023.3
+
+# 颜色输出
+colorama>=0.4.6

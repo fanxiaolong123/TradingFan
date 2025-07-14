@@ -1,0 +1,274 @@
+# 量化交易系统配置文件
+# 此文件包含了系统运行的所有配置参数
+
+# 系统基本配置
+system:
+  name: "AutoTrader"                    # 系统名称
+  version: "1.0.0"                      # 版本号
+  environment: "development"            # 环境类型: development, production, testing
+  timezone: "Asia/Shanghai"             # 时区设置
+  log_level: "INFO"                     # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  
+# 数据源配置
+data_sources:
+  # 默认数据源
+  default: "binance"
+  
+  # Binance配置
+  binance:
+    enabled: true                       # 是否启用
+    api_key: ""                        # API密钥（请在secrets.yml中配置）
+    api_secret: ""                     # API密钥（请在secrets.yml中配置）
+    testnet: false                     # 是否使用测试网
+    base_url: "https://api.binance.com" # API基础URL
+    timeout: 30                        # 请求超时时间（秒）
+    retry_times: 3                     # 重试次数
+    
+  # CCXT配置（可选）
+  ccxt:
+    enabled: false                     # 是否启用
+    exchange: "binance"                # 交易所名称
+    sandbox: false                     # 是否使用沙盒环境
+    
+# 交易配置
+trading:
+  # 默认交易参数
+  default_commission_rate: 0.001       # 默认手续费率
+  default_slippage: 0.0001             # 默认滑点
+  min_order_value: 10.0                # 最小订单价值（USDT）
+  max_order_value: 50000.0             # 最大订单价值（USDT）
+  
+  # 支持的交易对
+  supported_symbols:
+    - "BTCUSDT"
+    - "ETHUSDT"
+    - "BNBUSDT"
+    - "ADAUSDT"
+    - "DOTUSDT"
+    - "LINKUSDT"
+    - "LTCUSDT"
+    - "XRPUSDT"
+    - "BCHUSDT"
+    - "EOSUSDT"
+    
+  # 支持的时间周期
+  supported_timeframes:
+    - "1m"                             # 1分钟
+    - "5m"                             # 5分钟
+    - "15m"                            # 15分钟
+    - "30m"                            # 30分钟
+    - "1h"                             # 1小时
+    - "4h"                             # 4小时
+    - "1d"                             # 1天
+    - "1w"                             # 1周
+    
+# 策略配置
+strategies:
+  # 策略管理
+  max_active_strategies: 5             # 最大活跃策略数
+  strategy_timeout: 300                # 策略超时时间（秒）
+  
+  # 均值回归策略配置
+  mean_reversion:
+    enabled: true                      # 是否启用
+    symbol: "BTCUSDT"                  # 交易对
+    timeframe: "1h"                    # 时间周期
+    parameters:
+      ma_period: 20                    # 移动平均线周期
+      deviation_threshold: 0.02        # 偏离阈值
+      min_volume: 1000                 # 最小成交量
+    risk_management:
+      max_position_percent: 0.1        # 最大仓位比例
+      stop_loss_percent: 0.02          # 止损比例
+      take_profit_percent: 0.04        # 止盈比例
+      
+  # 可以在这里添加更多策略配置
+  # momentum_strategy:
+  #   enabled: false
+  #   symbol: "ETHUSDT"
+  #   timeframe: "5m"
+  #   parameters:
+  #     ...
+    
+# 风险管理配置
+risk_management:
+  # 全局风险控制
+  enabled: true                        # 是否启用风险管理
+  
+  # 仓位限制
+  position_limits:
+    max_position_percent: 0.1          # 单个仓位最大占总资金比例
+    max_total_position_percent: 0.8    # 总仓位最大占总资金比例
+    max_symbol_positions: 5            # 单个交易对最大仓位数
+    
+  # 损失限制
+  loss_limits:
+    max_daily_loss_percent: 0.05       # 每日最大损失比例
+    max_total_loss_percent: 0.20       # 总最大损失比例
+    max_drawdown_percent: 0.15         # 最大回撤比例
+    
+  # 交易频率限制
+  frequency_limits:
+    max_trades_per_hour: 10            # 每小时最大交易次数
+    max_trades_per_day: 100            # 每日最大交易次数
+    min_trade_interval_seconds: 60     # 最小交易间隔（秒）
+    
+  # 价格限制
+  price_limits:
+    max_price_deviation_percent: 0.05  # 最大价格偏离市价比例
+    
+  # 市场状态限制
+  market_limits:
+    min_market_volume_24h: 1000000     # 最小24小时市场成交量
+    max_volatility_threshold: 0.20     # 最大波动率阈值
+    
+# 账户配置
+account:
+  # 初始资金配置
+  initial_balance:
+    USDT: 10000.0                      # 初始USDT余额
+    # BTC: 0.1                         # 初始BTC余额（可选）
+    # ETH: 1.0                         # 初始ETH余额（可选）
+    
+  # 账户类型
+  account_type: "SPOT"                 # 账户类型: SPOT, MARGIN, FUTURES, SIMULATED
+  
+  # 资金管理
+  capital_management:
+    base_currency: "USDT"              # 基础货币
+    reserve_percent: 0.1               # 保留资金比例
+    max_leverage: 1.0                  # 最大杠杆倍数
+    
+# 回测配置
+backtest:
+  # 回测基本配置
+  default_timeframe: "1h"              # 默认时间周期
+  default_commission_rate: 0.001       # 默认手续费率
+  default_slippage: 0.0001             # 默认滑点
+  
+  # 回测数据配置
+  data_config:
+    data_provider: "binance"           # 数据提供者
+    max_data_length: 10000             # 最大数据长度
+    cache_data: true                   # 是否缓存数据
+    
+  # 回测输出配置
+  output_config:
+    output_dir: "backtest_results"     # 输出目录
+    save_trades: true                  # 是否保存交易记录
+    save_charts: true                  # 是否保存图表
+    chart_format: "html"               # 图表格式: html, png, svg
+    
+  # 回测分析配置
+  analysis_config:
+    benchmark_symbol: "BTCUSDT"        # 基准符号
+    risk_free_rate: 0.03               # 无风险利率
+    calculate_metrics: true            # 是否计算详细指标
+    
+# 数据库配置
+database:
+  # 数据库类型
+  type: "sqlite"                       # 数据库类型: sqlite, postgresql, mysql
+  
+  # SQLite配置
+  sqlite:
+    file_path: "data/trading.db"       # 数据库文件路径
+    
+  # PostgreSQL配置（可选）
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "trading"
+    username: ""                       # 请在secrets.yml中配置
+    password: ""                       # 请在secrets.yml中配置
+    
+# 日志配置
+logging:
+  # 日志级别
+  level: "INFO"                        # 日志级别
+  
+  # 日志格式
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # 日志文件配置
+  file_config:
+    enabled: true                      # 是否启用文件日志
+    file_path: "logs/trading.log"      # 日志文件路径
+    max_size: "10MB"                   # 最大文件大小
+    backup_count: 5                    # 备份文件数量
+    encoding: "utf-8"                  # 文件编码
+    
+  # 控制台日志配置
+  console_config:
+    enabled: true                      # 是否启用控制台日志
+    color: true                        # 是否启用彩色输出
+    
+# 通知配置
+notifications:
+  # 通知方式
+  enabled: false                       # 是否启用通知
+  
+  # 邮件通知配置
+  email:
+    enabled: false                     # 是否启用邮件通知
+    smtp_server: "smtp.gmail.com"      # SMTP服务器
+    smtp_port: 587                     # SMTP端口
+    username: ""                       # 用户名（请在secrets.yml中配置）
+    password: ""                       # 密码（请在secrets.yml中配置）
+    from_email: ""                     # 发件人邮箱
+    to_emails: []                      # 收件人邮箱列表
+    
+  # Telegram通知配置
+  telegram:
+    enabled: false                     # 是否启用Telegram通知
+    bot_token: ""                      # Bot Token（请在secrets.yml中配置）
+    chat_id: ""                        # Chat ID（请在secrets.yml中配置）
+    
+# Web UI配置
+web_ui:
+  # 是否启用Web UI
+  enabled: true                        # 是否启用
+  
+  # 服务器配置
+  server:
+    host: "0.0.0.0"                    # 监听地址
+    port: 8080                         # 监听端口
+    debug: false                       # 是否启用调试模式
+    
+  # 认证配置
+  authentication:
+    enabled: false                     # 是否启用认证
+    username: "admin"                  # 用户名
+    password: "password"               # 密码（请在secrets.yml中配置）
+    
+# 监控配置
+monitoring:
+  # 系统监控
+  system_monitoring:
+    enabled: true                      # 是否启用系统监控
+    interval: 60                       # 监控间隔（秒）
+    
+  # 性能监控
+  performance_monitoring:
+    enabled: true                      # 是否启用性能监控
+    metrics_retention_days: 30         # 指标保留天数
+    
+  # 健康检查
+  health_check:
+    enabled: true                      # 是否启用健康检查
+    check_interval: 30                 # 检查间隔（秒）
+    
+# 开发配置
+development:
+  # 调试模式
+  debug: true                          # 是否启用调试模式
+  
+  # 测试配置
+  testing:
+    use_mock_data: false               # 是否使用模拟数据
+    mock_data_file: "data/mock_data.json"  # 模拟数据文件
+    
+  # 性能分析
+  profiling:
+    enabled: false                     # 是否启用性能分析
+    output_file: "profile_results.prof"  # 性能分析输出文件
