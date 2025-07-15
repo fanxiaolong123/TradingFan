@@ -1,0 +1,22 @@
+{
+  "strategy_name": "momentum",
+  "symbol": "BTCUSDT",
+  "timeframe": "1h",
+  "backtest_period": "2023-01-01 到 2023-06-01",
+  "optimization_time": 52.075147,
+  "best_params": {
+    "short_ma_period": 30,
+    "long_ma_period": 100,
+    "position_size": 0.3
+  },
+  "performance_metrics": {
+    "total_return": 5.644873376678682e+21,
+    "annualized_return": 4.1163714509464676e+52,
+    "sharpe_ratio": 4.837049071308476e+49,
+    "max_drawdown": -39.93632527746875,
+    "win_rate": 0.36977491961414793,
+    "total_trades": 355
+  },
+  "performance_score": 65.0,
+  "meets_threshold": false
+}
