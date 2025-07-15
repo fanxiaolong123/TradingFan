@@ -16,7 +16,8 @@
       "Bash(find:*)",
       "Bash(timeout:*)",
       "WebFetch(domain:www.cryptodatadownload.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(open:*)"
     ],
     "deny": []
   }

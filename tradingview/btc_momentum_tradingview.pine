@@ -1,0 +1,120 @@
+//@version=5
+strategy("BTC 1H动量策略", overlay=true, initial_capital=100000, 
+         default_qty_type=strategy.percent_of_equity, default_qty_value=30,
+         commission_type=strategy.commission.percent, commission_value=0.1,
+         pyramiding=0)
+
+// ===== 输入参数 =====
+short_ma_len = input.int(24, "短期均线周期", minval=1)
+long_ma_len = input.int(72, "长期均线周期", minval=1)
+rsi_len = input.int(14, "RSI周期", minval=1)
+rsi_ob = input.int(70, "RSI超买线", minval=50, maxval=100)
+rsi_os = input.int(30, "RSI超卖线", minval=0, maxval=50)
+mom_len = input.int(48, "动量周期", minval=1)
+mom_threshold = input.float(0.02, "动量阈值", minval=0.001, step=0.001)
+vol_threshold = input.float(1.5, "成交量阈值", minval=1.0, step=0.1)
+stop_loss = input.float(3.0, "止损百分比", minval=0.1, step=0.1) / 100
+take_profit = input.float(6.0, "止盈百分比", minval=0.1, step=0.1) / 100
+
+// ===== 指标计算 =====
+// 均线
+ma_short = ta.sma(close, short_ma_len)
+ma_long = ta.sma(close, long_ma_len)
+
+// RSI
+rsi = ta.rsi(close, rsi_len)
+
+// 动量
+momentum = (close - close[mom_len]) / close[mom_len]
+
+// 成交量
+vol_avg = ta.sma(volume, 20)
+vol_ratio = volume / vol_avg
+
+// ===== 交易信号 =====
+// 趋势条件
+uptrend = ma_short > ma_long
+downtrend = ma_short < ma_long
+
+// 动量条件
+strong_momentum_up = momentum > mom_threshold
+strong_momentum_down = momentum < -mom_threshold
+
+// RSI条件
+rsi_bullish = rsi < rsi_ob and rsi > rsi_os
+rsi_oversold = rsi < rsi_os
+rsi_overbought = rsi > rsi_ob
+
+// 成交量条件
+high_volume = vol_ratio > vol_threshold
+
+// 买入信号
+buy_signal = uptrend and 
+             (rsi_oversold or (rsi_bullish and strong_momentum_up)) and 
+             high_volume and 
+             strategy.position_size == 0
+
+// 卖出信号
+sell_signal = (downtrend or rsi_overbought or strong_momentum_down) and 
+              strategy.position_size > 0
+
+// ===== 执行交易 =====
+if (buy_signal)
+    strategy.entry("买入", strategy.long)
+    // 设置止损止盈
+    strategy.exit("止损止盈", "买入", 
+                  stop=close * (1 - stop_loss), 
+                  limit=close * (1 + take_profit))
+
+if (sell_signal)
+    strategy.close("买入", comment="卖出信号")
+
+// ===== 绘图 =====
+// 均线
+plot(ma_short, "MA24", color=color.blue, linewidth=2)
+plot(ma_long, "MA72", color=color.orange, linewidth=2)
+
+// 买卖点标记
+plotshape(buy_signal, "买入信号", shape.triangleup, location.belowbar, 
+          color=color.green, size=size.small)
+plotshape(sell_signal, "卖出信号", shape.triangledown, location.abovebar, 
+          color=color.red, size=size.small)
+
+// 背景颜色（趋势）
+bgcolor(uptrend ? color.new(color.green, 95) : 
+        downtrend ? color.new(color.red, 95) : na)
+
+// ===== 信息面板 =====
+// 创建表格显示策略信息
+var table infoTable = table.new(position.top_right, 4, 6, 
+                                bgcolor=color.new(color.black, 85),
+                                border_width=1)
+
+if barstate.islast
+    // 更新表格内容
+    table.cell(infoTable, 0, 0, "指标", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(infoTable, 1, 0, "数值", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(infoTable, 2, 0, "状态", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    
+    table.cell(infoTable, 0, 1, "RSI", text_color=color.white)
+    table.cell(infoTable, 1, 1, str.tostring(rsi, "#.##"), text_color=color.white)
+    table.cell(infoTable, 2, 1, rsi > rsi_ob ? "超买" : rsi < rsi_os ? "超卖" : "正常", 
+               text_color=rsi > rsi_ob ? color.red : rsi < rsi_os ? color.green : color.white)
+    
+    table.cell(infoTable, 0, 2, "动量", text_color=color.white)
+    table.cell(infoTable, 1, 2, str.tostring(momentum * 100, "#.##") + "%", text_color=color.white)
+    table.cell(infoTable, 2, 2, momentum > mom_threshold ? "强势" : momentum < -mom_threshold ? "弱势" : "中性",
+               text_color=momentum > mom_threshold ? color.green : momentum < -mom_threshold ? color.red : color.white)
+    
+    table.cell(infoTable, 0, 3, "成交量比", text_color=color.white)
+    table.cell(infoTable, 1, 3, str.tostring(vol_ratio, "#.##"), text_color=color.white)
+    table.cell(infoTable, 2, 3, vol_ratio > vol_threshold ? "放量" : "缩量",
+               text_color=vol_ratio > vol_threshold ? color.green : color.yellow)
+    
+    table.cell(infoTable, 0, 4, "趋势", text_color=color.white)
+    table.cell(infoTable, 1, 4, uptrend ? "上升" : downtrend ? "下降" : "震荡", 
+               text_color=uptrend ? color.green : downtrend ? color.red : color.yellow)
+    
+    table.cell(infoTable, 0, 5, "持仓", text_color=color.white)
+    table.cell(infoTable, 1, 5, strategy.position_size > 0 ? "多头" : "空仓", 
+               text_color=strategy.position_size > 0 ? color.green : color.gray)

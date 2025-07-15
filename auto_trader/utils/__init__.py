@@ -44,6 +44,7 @@ from .time_utils import (
     get_period_start,
     get_period_end
 )
+from .signal_visualizer import SignalVisualizer, create_sample_data
 
 __all__ = [
     # 配置管理
@@ -84,7 +85,11 @@ __all__ = [
     'format_duration',
     'parse_timeframe',
     'get_period_start',
-    'get_period_end'
+    'get_period_end',
+    
+    # 信号可视化
+    'SignalVisualizer',
+    'create_sample_data'
 ]
 
 # 版本信息

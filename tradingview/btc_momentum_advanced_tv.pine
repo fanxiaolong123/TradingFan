@@ -1,0 +1,198 @@
+//@version=5
+strategy("BTC 1H动量策略-高级版", overlay=true, initial_capital=100000, 
+         default_qty_type=strategy.cash, 
+         commission_type=strategy.commission.percent, commission_value=0.1,
+         pyramiding=3, process_orders_on_close=true)
+
+// ===== 输入参数 =====
+// 策略参数
+short_ma_len = input.int(24, "短期均线周期", group="策略参数")
+long_ma_len = input.int(72, "长期均线周期", group="策略参数")
+rsi_len = input.int(14, "RSI周期", group="策略参数")
+rsi_ob = input.int(70, "RSI超买线", group="策略参数")
+rsi_os = input.int(30, "RSI超卖线", group="策略参数")
+mom_len = input.int(48, "动量周期", group="策略参数")
+mom_threshold = input.float(0.02, "动量阈值", group="策略参数")
+vol_threshold = input.float(1.5, "成交量阈值", group="策略参数")
+
+// 仓位管理参数
+use_dynamic_position = input.bool(true, "使用动态仓位", group="仓位管理")
+base_position_pct = input.float(30, "基础仓位百分比", minval=1, maxval=100, group="仓位管理")
+max_position_pct = input.float(90, "最大仓位百分比", minval=1, maxval=100, group="仓位管理")
+kelly_fraction = input.float(0.25, "凯利系数", minval=0.1, maxval=1.0, group="仓位管理")
+
+// 风险管理参数
+stop_loss = input.float(3.0, "止损百分比", group="风险管理") / 100
+take_profit = input.float(6.0, "止盈百分比", group="风险管理") / 100
+trailing_stop = input.bool(true, "使用移动止损", group="风险管理")
+trailing_offset = input.float(1.0, "移动止损触发偏移%", group="风险管理") / 100
+trailing_distance = input.float(2.0, "移动止损距离%", group="风险管理") / 100
+max_drawdown = input.float(10.0, "最大回撤限制%", group="风险管理") / 100
+
+// ===== 指标计算 =====
+ma_short = ta.sma(close, short_ma_len)
+ma_long = ta.sma(close, long_ma_len)
+rsi = ta.rsi(close, rsi_len)
+momentum = (close - close[mom_len]) / close[mom_len]
+vol_avg = ta.sma(volume, 20)
+vol_ratio = volume / vol_avg
+
+// ATR用于动态止损
+atr = ta.atr(14)
+atr_mult = input.float(2.0, "ATR倍数", group="风险管理")
+
+// ===== 仓位计算 =====
+// 计算历史胜率（简化版）
+var int wins = 0
+var int losses = 0
+var float avg_win = 0
+var float avg_loss = 0
+
+// 更新胜率统计
+if strategy.closedtrades > 0
+    trade_pnl = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if trade_pnl > 0
+        wins := wins + 1
+        avg_win := ((avg_win * (wins - 1)) + trade_pnl) / wins
+    else if trade_pnl < 0
+        losses := losses + 1
+        avg_loss := ((avg_loss * (losses - 1)) + math.abs(trade_pnl)) / losses
+
+win_rate = wins + losses > 0 ? wins / (wins + losses) : 0.5
+profit_loss_ratio = avg_loss > 0 ? avg_win / avg_loss : 1.0
+
+// 凯利公式计算最优仓位
+kelly_pct = win_rate - ((1 - win_rate) / profit_loss_ratio)
+kelly_position = math.max(0, math.min(kelly_pct * kelly_fraction, 1)) * 100
+
+// 根据市场状态调整仓位
+volatility_factor = atr / close
+trend_strength = math.abs(ma_short - ma_long) / ma_long
+confidence_score = trend_strength / volatility_factor
+
+// 动态仓位计算
+dynamic_position = use_dynamic_position ? 
+                  math.min(base_position_pct * (1 + confidence_score), max_position_pct) : 
+                  base_position_pct
+
+// 结合凯利公式
+final_position = use_dynamic_position and kelly_position > 0 ? 
+                (dynamic_position + kelly_position) / 2 : dynamic_position
+
+// ===== 交易信号 =====
+uptrend = ma_short > ma_long
+downtrend = ma_short < ma_long
+strong_momentum_up = momentum > mom_threshold
+strong_momentum_down = momentum < -mom_threshold
+rsi_bullish = rsi < rsi_ob and rsi > rsi_os
+rsi_oversold = rsi < rsi_os
+rsi_overbought = rsi > rsi_ob
+high_volume = vol_ratio > vol_threshold
+
+// 信号强度评分
+signal_strength = 0.0
+if uptrend
+    signal_strength := signal_strength + 0.3
+if rsi_oversold
+    signal_strength := signal_strength + 0.3
+else if rsi_bullish
+    signal_strength := signal_strength + 0.1
+if strong_momentum_up
+    signal_strength := signal_strength + 0.2
+if high_volume
+    signal_strength := signal_strength + 0.2
+
+buy_signal = signal_strength >= 0.6 and strategy.position_size == 0
+sell_signal = (downtrend or rsi_overbought or strong_momentum_down) and strategy.position_size > 0
+
+// ===== 风险检查 =====
+// 计算当前回撤
+equity = strategy.equity
+var float equity_peak = equity
+equity_peak := math.max(equity_peak, equity)
+current_drawdown = (equity_peak - equity) / equity_peak
+
+// 如果超过最大回撤，禁止新交易
+risk_ok = current_drawdown < max_drawdown
+
+// ===== 执行交易 =====
+position_size = (strategy.equity * final_position / 100) / close
+
+if (buy_signal and risk_ok)
+    // 计算动态止损止盈
+    sl_price = trailing_stop ? close - (atr * atr_mult) : close * (1 - stop_loss)
+    tp_price = close * (1 + take_profit)
+    
+    strategy.entry("Long", strategy.long, qty=position_size)
+    
+    if trailing_stop
+        strategy.exit("Exit", "Long", 
+                     trail_price=close * (1 + trailing_offset),
+                     trail_offset=close * trailing_distance,
+                     stop=sl_price,
+                     limit=tp_price)
+    else
+        strategy.exit("Exit", "Long", stop=sl_price, limit=tp_price)
+
+if (sell_signal)
+    strategy.close("Long", comment="卖出信号")
+
+// ===== 可视化 =====
+// 均线
+plot(ma_short, "MA24", color=color.blue, linewidth=2)
+plot(ma_long, "MA72", color=color.orange, linewidth=2)
+
+// 买卖信号
+plotshape(buy_signal and risk_ok, "买入", shape.triangleup, location.belowbar, 
+          color=color.green, size=size.small)
+plotshape(sell_signal, "卖出", shape.triangledown, location.abovebar, 
+          color=color.red, size=size.small)
+
+// 止损止盈线（仅在持仓时显示）
+plot(strategy.position_size > 0 ? strategy.position_avg_price * (1 - stop_loss) : na, 
+     "止损线", color=color.red, style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size > 0 ? strategy.position_avg_price * (1 + take_profit) : na, 
+     "止盈线", color=color.green, style=plot.style_linebr, linewidth=1)
+
+// 背景色
+bgcolor(uptrend ? color.new(color.green, 95) : downtrend ? color.new(color.red, 95) : na)
+
+// ===== 性能指标面板 =====
+var table perfTable = table.new(position.bottom_right, 2, 8)
+
+if barstate.islast
+    // 计算性能指标
+    total_trades = strategy.closedtrades
+    winning_trades = wins
+    losing_trades = losses
+    win_rate_pct = win_rate * 100
+    profit_factor = strategy.grossprofit / strategy.grossloss
+    net_profit = strategy.netprofit
+    max_dd = strategy.max_drawdown
+    sharpe = strategy.sharpe_ratio
+    
+    // 更新表格
+    table.cell(perfTable, 0, 0, "总交易数", bgcolor=color.new(color.gray, 80))
+    table.cell(perfTable, 1, 0, str.tostring(total_trades), bgcolor=color.new(color.gray, 80))
+    
+    table.cell(perfTable, 0, 1, "胜率", bgcolor=color.new(color.gray, 80))
+    table.cell(perfTable, 1, 1, str.tostring(win_rate_pct, "#.#") + "%", bgcolor=color.new(color.gray, 80))
+    
+    table.cell(perfTable, 0, 2, "盈亏比", bgcolor=color.new(color.gray, 80))
+    table.cell(perfTable, 1, 2, str.tostring(profit_factor, "#.##"), bgcolor=color.new(color.gray, 80))
+    
+    table.cell(perfTable, 0, 3, "净利润", bgcolor=color.new(color.gray, 80))
+    table.cell(perfTable, 1, 3, str.tostring(net_profit, "#,###"), 
+               bgcolor=color.new(net_profit > 0 ? color.green : color.red, 80))
+    
+    table.cell(perfTable, 0, 4, "最大回撤", bgcolor=color.new(color.gray, 80))
+    table.cell(perfTable, 1, 4, str.tostring(max_dd, "#.#") + "%", bgcolor=color.new(color.gray, 80))
+    
+    table.cell(perfTable, 0, 5, "当前仓位", bgcolor=color.new(color.gray, 80))
+    table.cell(perfTable, 1, 5, str.tostring(final_position, "#.#") + "%", bgcolor=color.new(color.gray, 80))
+    
+    table.cell(perfTable, 0, 6, "信号强度", bgcolor=color.new(color.gray, 80))
+    table.cell(perfTable, 1, 6, str.tostring(signal_strength, "#.##"), bgcolor=color.new(color.gray, 80))
+    
+    table.cell(perfTable, 0, 7, "凯利仓位", bgcolor=color.new(color.gray, 80))
+    table.cell(perfTable, 1, 7, str.tostring(kelly_position, "#.#") + "%", bgcolor=color.new(color.gray, 80))
