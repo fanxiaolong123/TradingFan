@@ -1,30 +1,385 @@
 """
-TraderEngine - 多策略交易引擎
+StrategyOrchestrator - 增强版多策略交易编排器
 
 统一管理多个币种和策略实例的核心调度器，支持：
-- 多策略并行运行
-- 资源协调和风险管理
-- 动态策略管理
-- 性能监控和状态管理
+- 多策略并行运行和资源调度
+- 智能资金分配和冲突解决
+- 动态策略管理和性能优化
+- 实时监控和异常恢复
+- 跨市场套利和相关性分析
+- 策略组合优化和风险平衡
 """
 
 import asyncio
 import logging
 import threading
 import time
-from datetime import datetime
-from typing import Dict, List, Optional, Any, Callable
-from dataclasses import dataclass
+import queue
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Callable, Set, Tuple
+from dataclasses import dataclass, field
 from enum import Enum
 import concurrent.futures
+import numpy as np
+from collections import defaultdict, deque
 
 from .data import DataManager
 from .broker import SimulatedBroker
 from .account import AccountManager
 from .risk import RiskManager
-from ..strategies.base import Strategy, StrategyConfig
+from ..strategies.base import Strategy, StrategyConfig, TradeSignal
 from ..utils.logger import get_logger
 from ..utils.config import get_config
+
+
+class ResourceType(Enum):
+    """资源类型枚举"""
+    CAPITAL = "capital"          # 资金
+    SYMBOL_ACCESS = "symbol_access"  # 交易对访问权限
+    API_CALLS = "api_calls"      # API调用次数
+    POSITION_SLOTS = "position_slots"  # 持仓位置
+
+
+class Priority(Enum):
+    """策略优先级枚举"""
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+    CRITICAL = 4
+
+
+@dataclass
+class ResourceAllocation:
+    """资源分配信息"""
+    strategy_name: str
+    resource_type: ResourceType
+    allocated_amount: float
+    max_amount: float
+    usage: float = 0.0
+    last_updated: datetime = field(default_factory=datetime.now)
+    
+    @property
+    def utilization_rate(self) -> float:
+        """资源利用率"""
+        if self.allocated_amount == 0:
+            return 0.0
+        return self.usage / self.allocated_amount
+
+
+@dataclass
+class StrategyMetrics:
+    """策略详细指标"""
+    name: str
+    # 性能指标
+    total_return: float = 0.0
+    sharpe_ratio: float = 0.0
+    max_drawdown: float = 0.0
+    win_rate: float = 0.0
+    
+    # 运行指标
+    signals_generated: int = 0
+    trades_executed: int = 0
+    active_positions: int = 0
+    last_signal_time: Optional[datetime] = None
+    
+    # 资源使用
+    capital_allocated: float = 0.0
+    capital_used: float = 0.0
+    api_calls_today: int = 0
+    
+    # 风险指标
+    var_95: float = 0.0  # 95% VaR
+    correlation_with_market: float = 0.0
+    
+    def update_performance(self, returns: List[float]):
+        """更新性能指标"""
+        if not returns:
+            return
+        
+        returns_array = np.array(returns)
+        self.total_return = float(np.prod(1 + returns_array) - 1)
+        
+        if len(returns_array) > 1:
+            self.sharpe_ratio = float(np.mean(returns_array) / np.std(returns_array) * np.sqrt(252))
+            
+            # 计算最大回撤
+            cumulative = np.cumprod(1 + returns_array)
+            running_max = np.maximum.accumulate(cumulative)
+            drawdowns = (cumulative - running_max) / running_max
+            self.max_drawdown = float(np.min(drawdowns))
+            
+            # 计算VaR
+            self.var_95 = float(np.percentile(returns_array, 5))
+
+
+@dataclass
+class ConflictResolution:
+    """冲突解决记录"""
+    timestamp: datetime
+    conflict_type: str
+    strategies_involved: List[str]
+    resolution_method: str
+    outcome: str
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
+class CapitalAllocator:
+    """智能资金分配器"""
+    
+    def __init__(self, total_capital: float, min_allocation: float = 0.01):
+        """
+        初始化资金分配器
+        
+        Args:
+            total_capital: 总资金量
+            min_allocation: 最小分配比例
+        """
+        self.total_capital = total_capital
+        self.min_allocation = min_allocation
+        self.allocations: Dict[str, float] = {}
+        self.performance_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
+        self.rebalance_frequency = timedelta(hours=4)  # 4小时重新平衡一次
+        self.last_rebalance = datetime.now()
+    
+    def allocate_capital(self, strategies: Dict[str, 'StrategyInstance']) -> Dict[str, float]:
+        """
+        智能分配资金
+        
+        Args:
+            strategies: 策略实例字典
+            
+        Returns:
+            Dict[str, float]: 每个策略的资金分配
+        """
+        if not strategies:
+            return {}
+        
+        # 检查是否需要重新平衡
+        if datetime.now() - self.last_rebalance < self.rebalance_frequency:
+            return self.allocations
+        
+        # 计算策略权重
+        weights = self._calculate_strategy_weights(strategies)
+        
+        # 分配资金
+        new_allocations = {}
+        reserved_capital = self.total_capital * 0.1  # 预留10%资金
+        available_capital = self.total_capital - reserved_capital
+        
+        for strategy_name, weight in weights.items():
+            allocation = available_capital * weight
+            allocation = max(allocation, self.total_capital * self.min_allocation)
+            new_allocations[strategy_name] = allocation
+        
+        # 确保总分配不超过可用资金
+        total_allocated = sum(new_allocations.values())
+        if total_allocated > available_capital:
+            scale_factor = available_capital / total_allocated
+            new_allocations = {k: v * scale_factor for k, v in new_allocations.items()}
+        
+        self.allocations = new_allocations
+        self.last_rebalance = datetime.now()
+        
+        return new_allocations
+    
+    def _calculate_strategy_weights(self, strategies: Dict[str, 'StrategyInstance']) -> Dict[str, float]:
+        """计算策略权重"""
+        weights = {}
+        
+        # 如果是首次分配，使用等权重
+        if not any(self.performance_history.values()):
+            equal_weight = 1.0 / len(strategies)
+            return {name: equal_weight for name in strategies.keys()}
+        
+        # 基于性能计算权重
+        strategy_scores = {}
+        
+        for name, instance in strategies.items():
+            if hasattr(instance, 'metrics') and instance.metrics:
+                metrics = instance.metrics
+                
+                # 综合评分：夏普比率 * 0.4 + 收益率 * 0.3 - 最大回撤 * 0.3
+                score = (
+                    metrics.sharpe_ratio * 0.4 +
+                    metrics.total_return * 0.3 -
+                    abs(metrics.max_drawdown) * 0.3
+                )
+                
+                # 胜率加成
+                score += metrics.win_rate * 0.1
+                
+                strategy_scores[name] = max(score, 0.1)  # 最低分0.1
+            else:
+                strategy_scores[name] = 0.5  # 默认分数
+        
+        # 归一化权重
+        total_score = sum(strategy_scores.values())
+        if total_score > 0:
+            weights = {name: score / total_score for name, score in strategy_scores.items()}
+        else:
+            equal_weight = 1.0 / len(strategies)
+            weights = {name: equal_weight for name in strategies.keys()}
+        
+        return weights
+
+
+class ConflictResolver:
+    """冲突解决器"""
+    
+    def __init__(self):
+        self.resolution_history: List[ConflictResolution] = []
+        self.strategy_priorities: Dict[str, Priority] = {}
+    
+    def resolve_symbol_conflict(self, conflicted_signals: List[Tuple[str, TradeSignal]]) -> List[Tuple[str, TradeSignal]]:
+        """
+        解决同一交易对的信号冲突
+        
+        Args:
+            conflicted_signals: 冲突信号列表，每个元素为(策略名, 信号)
+            
+        Returns:
+            List[Tuple[str, TradeSignal]]: 解决冲突后的信号列表
+        """
+        if len(conflicted_signals) <= 1:
+            return conflicted_signals
+        
+        symbol = conflicted_signals[0][1].symbol
+        
+        # 按信号类型分组
+        buy_signals = [(name, signal) for name, signal in conflicted_signals 
+                      if signal.signal_type.value in ['BUY']]
+        sell_signals = [(name, signal) for name, signal in conflicted_signals 
+                       if signal.signal_type.value in ['SELL']]
+        
+        resolved_signals = []
+        
+        # 处理买入信号冲突
+        if len(buy_signals) > 1:
+            best_buy = self._select_best_signal(buy_signals, 'BUY')
+            if best_buy:
+                resolved_signals.append(best_buy)
+        elif len(buy_signals) == 1:
+            resolved_signals.extend(buy_signals)
+        
+        # 处理卖出信号冲突
+        if len(sell_signals) > 1:
+            best_sell = self._select_best_signal(sell_signals, 'SELL')
+            if best_sell:
+                resolved_signals.append(best_sell)
+        elif len(sell_signals) == 1:
+            resolved_signals.extend(sell_signals)
+        
+        # 处理买卖信号对冲
+        if buy_signals and sell_signals:
+            # 计算净信号强度
+            buy_strength = sum(signal.confidence for _, signal in buy_signals)
+            sell_strength = sum(signal.confidence for _, signal in sell_signals)
+            
+            if abs(buy_strength - sell_strength) > 0.3:  # 信号强度差异显著
+                if buy_strength > sell_strength:
+                    resolved_signals = [self._select_best_signal(buy_signals, 'BUY')]
+                else:
+                    resolved_signals = [self._select_best_signal(sell_signals, 'SELL')]
+            else:
+                # 信号强度相近，取消交易
+                resolved_signals = []
+        
+        # 记录冲突解决
+        if len(conflicted_signals) != len(resolved_signals):
+            resolution = ConflictResolution(
+                timestamp=datetime.now(),
+                conflict_type="symbol_conflict",
+                strategies_involved=[name for name, _ in conflicted_signals],
+                resolution_method="priority_and_confidence",
+                outcome=f"Reduced from {len(conflicted_signals)} to {len(resolved_signals)} signals",
+                details={'symbol': symbol}
+            )
+            self.resolution_history.append(resolution)
+        
+        return resolved_signals
+    
+    def _select_best_signal(self, signals: List[Tuple[str, TradeSignal]], signal_type: str) -> Optional[Tuple[str, TradeSignal]]:
+        """根据优先级和置信度选择最佳信号"""
+        if not signals:
+            return None
+        
+        def signal_score(strategy_name: str, signal: TradeSignal) -> float:
+            priority_score = self.strategy_priorities.get(strategy_name, Priority.MEDIUM).value
+            confidence_score = signal.confidence
+            return priority_score * 0.6 + confidence_score * 0.4
+        
+        best_signal = max(signals, key=lambda x: signal_score(x[0], x[1]))
+        return best_signal
+    
+    def set_strategy_priority(self, strategy_name: str, priority: Priority):
+        """设置策略优先级"""
+        self.strategy_priorities[strategy_name] = priority
+
+
+class PerformanceAnalyzer:
+    """性能分析器"""
+    
+    def __init__(self):
+        self.strategy_returns: Dict[str, List[float]] = defaultdict(list)
+        self.correlation_matrix: Optional[np.ndarray] = None
+        self.strategy_names: List[str] = []
+    
+    def update_returns(self, strategy_name: str, return_value: float):
+        """更新策略收益"""
+        self.strategy_returns[strategy_name].append(return_value)
+        
+        # 保持最近1000个收益记录
+        if len(self.strategy_returns[strategy_name]) > 1000:
+            self.strategy_returns[strategy_name] = self.strategy_returns[strategy_name][-1000:]
+    
+    def calculate_portfolio_correlation(self) -> Optional[np.ndarray]:
+        """计算策略组合相关性矩阵"""
+        if len(self.strategy_returns) < 2:
+            return None
+        
+        # 获取所有策略的收益序列
+        strategy_names = list(self.strategy_returns.keys())
+        returns_matrix = []
+        
+        min_length = min(len(returns) for returns in self.strategy_returns.values() if returns)
+        if min_length < 10:  # 至少需要10个数据点
+            return None
+        
+        for name in strategy_names:
+            returns = self.strategy_returns[name][-min_length:]
+            returns_matrix.append(returns)
+        
+        returns_matrix = np.array(returns_matrix)
+        self.correlation_matrix = np.corrcoef(returns_matrix)
+        self.strategy_names = strategy_names
+        
+        return self.correlation_matrix
+    
+    def get_diversification_score(self) -> float:
+        """计算组合多样化得分"""
+        if self.correlation_matrix is None:
+            self.calculate_portfolio_correlation()
+        
+        if self.correlation_matrix is None or len(self.correlation_matrix) < 2:
+            return 1.0
+        
+        # 计算平均相关系数（排除对角线）
+        n = len(self.correlation_matrix)
+        total_correlation = 0.0
+        count = 0
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                total_correlation += abs(self.correlation_matrix[i, j])
+                count += 1
+        
+        if count == 0:
+            return 1.0
+        
+        avg_correlation = total_correlation / count
+        
+        # 多样化得分 = 1 - 平均相关系数
+        return max(0.0, 1.0 - avg_correlation)
 
 
 class EngineState(Enum):
@@ -38,7 +393,7 @@ class EngineState(Enum):
 
 @dataclass
 class StrategyInstance:
-    """策略实例信息"""
+    """增强版策略实例信息"""
     name: str
     strategy: Strategy
     config: StrategyConfig
@@ -48,9 +403,55 @@ class StrategyInstance:
     error_count: int = 0
     last_error: Optional[str] = None
     
+    # 增强字段
+    priority: Priority = Priority.MEDIUM
+    metrics: Optional[StrategyMetrics] = None
+    resource_allocations: Dict[ResourceType, ResourceAllocation] = field(default_factory=dict)
+    signal_queue: queue.Queue = field(default_factory=queue.Queue)
+    health_score: float = 1.0
+    last_health_check: Optional[datetime] = None
+    restart_count: int = 0
+    max_restarts: int = 3
+    
     def __post_init__(self):
         if self.performance is None:
             self.performance = {}
+        if self.metrics is None:
+            self.metrics = StrategyMetrics(name=self.name)
+    
+    def update_health_score(self):
+        """更新策略健康度评分"""
+        score = 1.0
+        
+        # 基于错误率扣分
+        if self.error_count > 0:
+            error_penalty = min(0.5, self.error_count * 0.1)
+            score -= error_penalty
+        
+        # 基于重启次数扣分
+        if self.restart_count > 0:
+            restart_penalty = min(0.3, self.restart_count * 0.1)
+            score -= restart_penalty
+        
+        # 基于最后更新时间扣分
+        if self.last_update:
+            time_since_update = (datetime.now() - self.last_update).total_seconds()
+            if time_since_update > 300:  # 5分钟无更新
+                time_penalty = min(0.2, (time_since_update - 300) / 1800)  # 最多扣0.2分
+                score -= time_penalty
+        
+        self.health_score = max(0.0, score)
+        self.last_health_check = datetime.now()
+        
+        return self.health_score
+    
+    def can_restart(self) -> bool:
+        """检查是否可以重启"""
+        return self.restart_count < self.max_restarts
+    
+    def record_restart(self):
+        """记录重启"""
+        self.restart_count += 1
 
 
 @dataclass
@@ -66,24 +467,24 @@ class EngineMetrics:
     last_update: Optional[datetime] = None
 
 
-class TraderEngine:
+class StrategyOrchestrator:
     """
-    多策略交易引擎
+    增强版多策略交易编排器
     
     负责：
-    - 策略生命周期管理
-    - 数据分发和处理
-    - 资源协调和冲突解决
-    - 性能监控和异常处理
-    - 统一的日志和报警
+    - 智能策略生命周期管理
+    - 动态资源分配和冲突解决
+    - 性能监控和自动优化
+    - 跨策略协调和组合管理
+    - 实时风险控制和异常恢复
     """
     
     def __init__(self, config: Optional[Dict] = None):
         """
-        初始化交易引擎
+        初始化策略编排器
         
         Args:
-            config: 引擎配置，如果为None则从配置文件加载
+            config: 编排器配置，如果为None则从配置文件加载
         """
         self.config = config or get_config()
         self.logger = get_logger(__name__)
@@ -104,23 +505,46 @@ class TraderEngine:
         self.strategy_threads: Dict[str, threading.Thread] = {}
         self.strategy_locks: Dict[str, threading.Lock] = {}
         
+        # 增强功能组件
+        self.capital_allocator = CapitalAllocator(
+            total_capital=self.config.get('trading.initial_capital', 10000.0)
+        )
+        self.conflict_resolver = ConflictResolver()
+        self.performance_analyzer = PerformanceAnalyzer()
+        
+        # 信号处理
+        self.signal_queue: queue.Queue = queue.Queue()
+        self.signal_processor_thread: Optional[threading.Thread] = None
+        
+        # 资源管理
+        self.resource_allocations: Dict[str, Dict[ResourceType, ResourceAllocation]] = defaultdict(dict)
+        self.symbol_locks: Dict[str, threading.Lock] = {}
+        
         # 性能指标
         self.metrics = EngineMetrics()
         self.metrics_lock = threading.Lock()
+        
+        # 健康监控
+        self.health_monitor_thread: Optional[threading.Thread] = None
+        self.auto_recovery_enabled = True
         
         # 事件回调
         self.event_callbacks: Dict[str, List[Callable]] = {
             'strategy_started': [],
             'strategy_stopped': [],
             'strategy_error': [],
+            'strategy_recovered': [],
             'signal_generated': [],
+            'signal_conflicted': [],
+            'signal_resolved': [],
             'trade_executed': [],
+            'capital_rebalanced': [],
             'engine_started': [],
             'engine_stopped': [],
             'engine_error': []
         }
         
-        self.logger.info("TraderEngine初始化完成")
+        self.logger.info("StrategyOrchestrator初始化完成")
     
     def initialize(self) -> bool:
         """
@@ -154,12 +578,226 @@ class TraderEngine:
             # 从配置加载策略
             self._load_strategies_from_config()
             
-            self.logger.info("TraderEngine组件初始化成功")
+            self.logger.info("StrategyOrchestrator组件初始化成功")
             return True
             
         except Exception as e:
-            self.logger.error(f"TraderEngine初始化失败: {e}")
+            self.logger.error(f"StrategyOrchestrator初始化失败: {e}")
             self.state = EngineState.ERROR
+            return False
+    
+    def _start_signal_processor(self):
+        """启动信号处理器"""
+        def process_signals():
+            """信号处理主循环"""
+            self.logger.info("信号处理器启动")
+            
+            pending_signals: Dict[str, List[Tuple[str, TradeSignal]]] = defaultdict(list)
+            
+            while not self.stop_event.is_set():
+                try:
+                    # 获取信号（带超时）
+                    try:
+                        strategy_name, signal = self.signal_queue.get(timeout=1.0)
+                    except queue.Empty:
+                        continue
+                    
+                    # 按交易对分组信号
+                    symbol = signal.symbol
+                    pending_signals[symbol].append((strategy_name, signal))
+                    
+                    # 触发信号生成事件
+                    self._trigger_event('signal_generated', {
+                        'strategy_name': strategy_name,
+                        'signal': signal,
+                        'timestamp': datetime.now()
+                    })
+                    
+                    # 检查是否有冲突信号
+                    if len(pending_signals[symbol]) > 1:
+                        # 触发冲突事件
+                        self._trigger_event('signal_conflicted', {
+                            'symbol': symbol,
+                            'conflicted_signals': pending_signals[symbol],
+                            'timestamp': datetime.now()
+                        })
+                        
+                        # 解决冲突
+                        resolved_signals = self.conflict_resolver.resolve_symbol_conflict(
+                            pending_signals[symbol]
+                        )
+                        
+                        # 触发解决事件
+                        self._trigger_event('signal_resolved', {
+                            'symbol': symbol,
+                            'original_count': len(pending_signals[symbol]),
+                            'resolved_count': len(resolved_signals),
+                            'resolved_signals': resolved_signals,
+                            'timestamp': datetime.now()
+                        })
+                        
+                        # 执行解决后的信号
+                        for strategy_name, resolved_signal in resolved_signals:
+                            self._execute_signal(strategy_name, resolved_signal)
+                        
+                        # 清空该交易对的待处理信号
+                        pending_signals[symbol].clear()
+                    else:
+                        # 单一信号，直接执行
+                        self._execute_signal(strategy_name, signal)
+                        pending_signals[symbol].clear()
+                    
+                    # 标记任务完成
+                    self.signal_queue.task_done()
+                    
+                except Exception as e:
+                    self.logger.error(f"信号处理异常: {e}")
+            
+            self.logger.info("信号处理器停止")
+        
+        self.signal_processor_thread = threading.Thread(
+            target=process_signals,
+            name="SignalProcessor",
+            daemon=True
+        )
+        self.signal_processor_thread.start()
+    
+    def _execute_signal(self, strategy_name: str, signal: TradeSignal):
+        """执行交易信号"""
+        try:
+            # 获取策略实例
+            if strategy_name not in self.strategies:
+                self.logger.error(f"策略不存在: {strategy_name}")
+                return
+            
+            strategy_instance = self.strategies[strategy_name]
+            
+            # 检查资金分配
+            capital_allocation = self.capital_allocator.allocations.get(strategy_name, 0)
+            if capital_allocation <= 0:
+                self.logger.warning(f"策略 {strategy_name} 未分配资金，跳过信号执行")
+                return
+            
+            # 计算交易数量
+            if signal.quantity is None:
+                # 根据资金分配和信号置信度计算数量
+                if signal.quantity_percent:
+                    trade_amount = capital_allocation * signal.quantity_percent * signal.confidence
+                else:
+                    trade_amount = capital_allocation * 0.1 * signal.confidence  # 默认使用10%资金
+                
+                # 转换为数量（简化计算，实际应该根据当前价格）
+                quantity = trade_amount / (signal.price or 50000)  # 假设默认价格
+            else:
+                quantity = signal.quantity
+            
+            # 执行订单
+            order = self.broker.place_order(signal, quantity, signal.price)
+            
+            if order:
+                # 更新策略指标
+                strategy_instance.metrics.signals_generated += 1
+                strategy_instance.metrics.last_signal_time = datetime.now()
+                
+                if order.status.value in ['FILLED', 'PARTIALLY_FILLED']:
+                    strategy_instance.metrics.trades_executed += 1
+                
+                # 触发交易执行事件
+                self._trigger_event('trade_executed', {
+                    'strategy_name': strategy_name,
+                    'signal': signal,
+                    'order': order,
+                    'timestamp': datetime.now()
+                })
+                
+                self.logger.info(f"信号执行成功: {strategy_name} - {signal.symbol} {signal.signal_type.value}")
+            else:
+                self.logger.error(f"信号执行失败: {strategy_name} - {signal.symbol}")
+                
+        except Exception as e:
+            self.logger.error(f"执行信号时发生异常: {strategy_name} - {e}")
+    
+    def _start_health_monitor(self):
+        """启动健康监控器"""
+        def monitor_health():
+            """健康监控主循环"""
+            self.logger.info("健康监控器启动")
+            
+            while not self.stop_event.is_set():
+                try:
+                    # 检查所有策略健康状态
+                    for name, instance in self.strategies.items():
+                        health_score = instance.update_health_score()
+                        
+                        # 如果健康度过低且启用自动恢复
+                        if health_score < 0.3 and self.auto_recovery_enabled:
+                            if instance.can_restart():
+                                self.logger.warning(f"策略 {name} 健康度过低 ({health_score:.2f})，尝试重启")
+                                if self._restart_strategy_internal(name):
+                                    self._trigger_event('strategy_recovered', {
+                                        'strategy_name': name,
+                                        'old_health_score': health_score,
+                                        'action': 'restart',
+                                        'timestamp': datetime.now()
+                                    })
+                            else:
+                                self.logger.error(f"策略 {name} 已达到最大重启次数，停用策略")
+                                self._stop_strategy(name)
+                    
+                    # 检查资金分配是否需要重新平衡
+                    new_allocations = self.capital_allocator.allocate_capital(self.strategies)
+                    if new_allocations != self.capital_allocator.allocations:
+                        self.logger.info("触发资金重新分配")
+                        self._trigger_event('capital_rebalanced', {
+                            'old_allocations': self.capital_allocator.allocations.copy(),
+                            'new_allocations': new_allocations,
+                            'timestamp': datetime.now()
+                        })
+                    
+                    # 更新性能分析
+                    self.performance_analyzer.calculate_portfolio_correlation()
+                    
+                    # 等待30秒后再次检查
+                    time.sleep(30)
+                    
+                except Exception as e:
+                    self.logger.error(f"健康监控异常: {e}")
+                    time.sleep(10)
+            
+            self.logger.info("健康监控器停止")
+        
+        self.health_monitor_thread = threading.Thread(
+            target=monitor_health,
+            name="HealthMonitor",
+            daemon=True
+        )
+        self.health_monitor_thread.start()
+    
+    def _restart_strategy_internal(self, name: str) -> bool:
+        """内部重启策略方法"""
+        if name not in self.strategies:
+            return False
+        
+        instance = self.strategies[name]
+        
+        try:
+            # 停止策略
+            self._stop_strategy(name)
+            time.sleep(2)  # 等待完全停止
+            
+            # 重新启动
+            if self._start_strategy(name):
+                instance.record_restart()
+                instance.error_count = 0  # 重置错误计数
+                instance.last_error = None
+                self.logger.info(f"策略 {name} 重启成功")
+                return True
+            else:
+                self.logger.error(f"策略 {name} 重启失败")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"重启策略 {name} 时发生异常: {e}")
             return False
     
     def _load_strategies_from_config(self):
@@ -286,11 +924,13 @@ class TraderEngine:
                 else:
                     self.logger.error(f"策略启动失败: {name}")
             
-            # 启动监控线程
+            # 启动增强功能组件
+            self._start_signal_processor()
+            self._start_health_monitor()
             self._start_monitoring()
             
             self.state = EngineState.RUNNING
-            self.logger.info("TraderEngine启动成功")
+            self.logger.info("StrategyOrchestrator启动成功")
             
             # 触发启动事件
             self._trigger_event('engine_started', {
@@ -591,6 +1231,124 @@ class TraderEngine:
         # 重新启动策略
         return self._start_strategy(name)
     
+    def submit_signal(self, strategy_name: str, signal: TradeSignal) -> bool:
+        """
+        提交交易信号到信号队列
+        
+        Args:
+            strategy_name: 策略名称
+            signal: 交易信号
+            
+        Returns:
+            bool: 是否成功提交
+        """
+        try:
+            if strategy_name not in self.strategies:
+                self.logger.error(f"策略不存在: {strategy_name}")
+                return False
+            
+            self.signal_queue.put((strategy_name, signal))
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"提交信号失败: {e}")
+            return False
+    
+    def set_strategy_priority(self, strategy_name: str, priority: Priority) -> bool:
+        """
+        设置策略优先级
+        
+        Args:
+            strategy_name: 策略名称
+            priority: 优先级
+            
+        Returns:
+            bool: 是否设置成功
+        """
+        if strategy_name not in self.strategies:
+            self.logger.error(f"策略不存在: {strategy_name}")
+            return False
+        
+        self.strategies[strategy_name].priority = priority
+        self.conflict_resolver.set_strategy_priority(strategy_name, priority)
+        
+        self.logger.info(f"策略 {strategy_name} 优先级设置为 {priority.name}")
+        return True
+    
+    def get_portfolio_correlation(self) -> Optional[np.ndarray]:
+        """获取策略组合相关性矩阵"""
+        return self.performance_analyzer.calculate_portfolio_correlation()
+    
+    def get_diversification_score(self) -> float:
+        """获取组合多样化得分"""
+        return self.performance_analyzer.get_diversification_score()
+    
+    def get_capital_allocations(self) -> Dict[str, float]:
+        """获取当前资金分配"""
+        return self.capital_allocator.allocations.copy()
+    
+    def force_capital_rebalance(self) -> Dict[str, float]:
+        """强制重新分配资金"""
+        self.capital_allocator.last_rebalance = datetime.now() - timedelta(hours=5)
+        return self.capital_allocator.allocate_capital(self.strategies)
+    
+    def get_conflict_history(self) -> List[ConflictResolution]:
+        """获取冲突解决历史"""
+        return self.conflict_resolver.resolution_history.copy()
+    
+    def get_orchestrator_stats(self) -> Dict[str, Any]:
+        """获取编排器详细统计信息"""
+        stats = {
+            'engine_status': self.get_engine_status(),
+            'strategies_status': self.get_strategies_status(),
+            'capital_allocations': self.get_capital_allocations(),
+            'diversification_score': self.get_diversification_score(),
+            'signal_queue_size': self.signal_queue.qsize(),
+            'conflict_resolutions_count': len(self.conflict_resolver.resolution_history),
+            'auto_recovery_enabled': self.auto_recovery_enabled,
+            'total_capital': self.capital_allocator.total_capital
+        }
+        
+        # 健康度统计
+        health_scores = []
+        for instance in self.strategies.values():
+            if instance.health_score is not None:
+                health_scores.append(instance.health_score)
+        
+        if health_scores:
+            stats['average_health_score'] = sum(health_scores) / len(health_scores)
+            stats['min_health_score'] = min(health_scores)
+        else:
+            stats['average_health_score'] = 1.0
+            stats['min_health_score'] = 1.0
+        
+        # 策略优先级分布
+        priority_distribution = {}
+        for instance in self.strategies.values():
+            priority = instance.priority.name
+            priority_distribution[priority] = priority_distribution.get(priority, 0) + 1
+        stats['priority_distribution'] = priority_distribution
+        
+        return stats
+    
+    def enable_auto_recovery(self, enabled: bool = True):
+        """启用/禁用自动恢复"""
+        self.auto_recovery_enabled = enabled
+        self.logger.info(f"自动恢复已{'启用' if enabled else '禁用'}")
+    
+    def get_strategy_metrics(self, strategy_name: str) -> Optional[StrategyMetrics]:
+        """获取指定策略的详细指标"""
+        if strategy_name not in self.strategies:
+            return None
+        
+        return self.strategies[strategy_name].metrics
+    
+    def update_strategy_performance(self, strategy_name: str, return_value: float):
+        """更新策略性能数据"""
+        if strategy_name in self.strategies:
+            self.performance_analyzer.update_returns(strategy_name, return_value)
+
+
     def __enter__(self):
         """上下文管理器入口"""
         return self
@@ -598,3 +1356,7 @@ class TraderEngine:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
         self.stop()
+
+
+# 保持向后兼容
+TraderEngine = StrategyOrchestrator

@@ -9,7 +9,14 @@
       "Bash(ls:*)",
       "Bash(rm:*)",
       "Bash(mv:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(claude config set model claude-3-5-sonnet-20241022)",
+      "Bash(claude config set --global model claude-3-5-sonnet-20241022)",
+      "Bash(find:*)",
+      "Bash(timeout:*)",
+      "WebFetch(domain:www.cryptodatadownload.com)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": []
   }

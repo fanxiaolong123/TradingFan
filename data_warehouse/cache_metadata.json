@@ -1,0 +1,82 @@
+{
+  "BTCUSDT_1h": {
+    "symbol": "BTCUSDT",
+    "interval": "1h",
+    "records_count": 310,
+    "start_time": "2025-07-02T11:00:00",
+    "end_time": "2025-07-15T08:00:00",
+    "last_updated": "2025-07-15T16:23:05.172780"
+  },
+  "BTCUSDT_1d": {
+    "symbol": "BTCUSDT",
+    "interval": "1d",
+    "records_count": 14,
+    "start_time": "2025-07-02T00:00:00",
+    "end_time": "2025-07-15T00:00:00",
+    "last_updated": "2025-07-15T16:23:07.305744"
+  },
+  "ETHUSDT_1h": {
+    "symbol": "ETHUSDT",
+    "interval": "1h",
+    "records_count": 310,
+    "start_time": "2025-07-02T11:00:00",
+    "end_time": "2025-07-15T08:00:00",
+    "last_updated": "2025-07-15T16:23:09.542650"
+  },
+  "ETHUSDT_1d": {
+    "symbol": "ETHUSDT",
+    "interval": "1d",
+    "records_count": 14,
+    "start_time": "2025-07-02T00:00:00",
+    "end_time": "2025-07-15T00:00:00",
+    "last_updated": "2025-07-15T16:23:11.679759"
+  },
+  "SOLUSDT_1h": {
+    "symbol": "SOLUSDT",
+    "interval": "1h",
+    "records_count": 310,
+    "start_time": "2025-07-02T11:00:00",
+    "end_time": "2025-07-15T08:00:00",
+    "last_updated": "2025-07-15T16:23:13.866065"
+  },
+  "SOLUSDT_1d": {
+    "symbol": "SOLUSDT",
+    "interval": "1d",
+    "records_count": 14,
+    "start_time": "2025-07-02T00:00:00",
+    "end_time": "2025-07-15T00:00:00",
+    "last_updated": "2025-07-15T16:23:15.990044"
+  },
+  "DOGEUSDT_1h": {
+    "symbol": "DOGEUSDT",
+    "interval": "1h",
+    "records_count": 310,
+    "start_time": "2025-07-02T11:00:00",
+    "end_time": "2025-07-15T08:00:00",
+    "last_updated": "2025-07-15T16:23:18.215726"
+  },
+  "DOGEUSDT_1d": {
+    "symbol": "DOGEUSDT",
+    "interval": "1d",
+    "records_count": 14,
+    "start_time": "2025-07-02T00:00:00",
+    "end_time": "2025-07-15T00:00:00",
+    "last_updated": "2025-07-15T16:23:20.370737"
+  },
+  "PEPEUSDT_1h": {
+    "symbol": "PEPEUSDT",
+    "interval": "1h",
+    "records_count": 310,
+    "start_time": "2025-07-02T11:00:00",
+    "end_time": "2025-07-15T08:00:00",
+    "last_updated": "2025-07-15T16:23:22.540627"
+  },
+  "PEPEUSDT_1d": {
+    "symbol": "PEPEUSDT",
+    "interval": "1d",
+    "records_count": 14,
+    "start_time": "2025-07-02T00:00:00",
+    "end_time": "2025-07-15T00:00:00",
+    "last_updated": "2025-07-15T16:23:24.680184"
+  }
+}

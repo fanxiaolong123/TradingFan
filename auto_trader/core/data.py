@@ -20,6 +20,23 @@ import websocket
 import json
 import requests
 
+# 导入数据质量管理器
+try:
+    from .data_quality import DataQualityManager, QualityReport
+    DATA_QUALITY_AVAILABLE = True
+except ImportError:
+    DataQualityManager = None
+    QualityReport = None
+    DATA_QUALITY_AVAILABLE = False
+
+# 导入KlineDataManager
+try:
+    from .data_loader import KlineDataManager
+    KLINE_DATA_MANAGER_AVAILABLE = True
+except ImportError:
+    KlineDataManager = None
+    KLINE_DATA_MANAGER_AVAILABLE = False
+
 # 可选导入，避免缺少依赖时导入失败
 try:
     from binance.client import Client
@@ -138,22 +155,26 @@ class BinanceDataProvider(DataProvider):
     """币安数据提供者"""
     
     def __init__(self, api_key: Optional[str] = None, api_secret: Optional[str] = None, 
-                 base_url: str = "https://api.binance.com", testnet: bool = False):
+                 base_url: str = "https://testnet.binance.vision", testnet: bool = True):
         """
         初始化币安数据提供者
         
         Args:
             api_key: API密钥（可选，用于获取更高频率限制）
             api_secret: API密钥（可选）
-            base_url: API基础URL（默认为主网）
-            testnet: 是否使用测试网络（默认为False）
+            base_url: API基础URL（默认为测试网）
+            testnet: 是否使用测试网络（默认为True）
         """
         if not BINANCE_AVAILABLE:
             print("警告: python-binance 库未安装，将使用REST API方式")
         
         self.api_key = api_key
         self.api_secret = api_secret
-        self.base_url = base_url  # 存储API基础URL
+        # 确保使用测试网URL
+        if testnet:
+            self.base_url = "https://testnet.binance.vision"
+        else:
+            self.base_url = base_url
         self.testnet = testnet    # 存储测试网络标志
         
         # 不立即初始化Client，避免启动时的API调用
@@ -562,13 +583,35 @@ class BinanceDataProvider(DataProvider):
 class DataManager:
     """数据管理器 - 统一管理多个数据源"""
     
-    def __init__(self):
-        """初始化数据管理器"""
+    def __init__(self, enable_quality_check: bool = True, use_kline_manager: bool = True, cache_dir: str = "data/"):
+        """
+        初始化数据管理器
+        
+        Args:
+            enable_quality_check: 是否启用数据质量检查
+            use_kline_manager: 是否使用KlineDataManager进行数据缓存
+            cache_dir: 缓存目录路径
+        """
         self.providers: Dict[str, DataProvider] = {}    # 数据提供者
         self.default_provider: Optional[str] = None      # 默认数据提供者
         self.cache: Dict[str, pd.DataFrame] = {}        # 数据缓存
         self.cache_expire_time = 60  # 缓存过期时间（秒）
         self.last_cache_time: Dict[str, datetime] = {}  # 最后缓存时间
+        
+        # KlineDataManager集成
+        self.use_kline_manager = use_kline_manager and KLINE_DATA_MANAGER_AVAILABLE
+        if self.use_kline_manager:
+            self.kline_manager = KlineDataManager(cache_dir=cache_dir)
+            print(f"✅ KlineDataManager已集成，缓存目录: {cache_dir}")
+        else:
+            self.kline_manager = None
+            if use_kline_manager:
+                print("⚠️ KlineDataManager不可用，使用传统缓存")
+        
+        # 数据质量管理
+        self.enable_quality_check = enable_quality_check and DATA_QUALITY_AVAILABLE
+        self.quality_manager = DataQualityManager() if self.enable_quality_check else None
+        self.quality_reports: List[QualityReport] = []  # 质量报告历史
     
     def add_provider(self, name: str, provider: DataProvider, is_default: bool = False) -> None:
         """
@@ -604,9 +647,11 @@ class DataManager:
                             end_time: Optional[datetime] = None,
                             limit: int = 1000,
                             provider: Optional[str] = None,
-                            use_cache: bool = True) -> pd.DataFrame:
+                            use_cache: bool = True,
+                            quality_check: bool = True,
+                            force_refresh: bool = False) -> pd.DataFrame:
         """
-        获取历史K线数据（支持缓存）
+        获取历史K线数据（支持缓存和质量检查）
         
         Args:
             symbol: 交易对符号
@@ -616,15 +661,59 @@ class DataManager:
             limit: 数据条数限制
             provider: 数据提供者名称
             use_cache: 是否使用缓存
+            quality_check: 是否进行质量检查
+            force_refresh: 是否强制刷新缓存
             
         Returns:
             pd.DataFrame: K线数据
         """
+        # 如果使用KlineDataManager，优先使用它
+        if self.use_kline_manager and start_time and end_time:
+            try:
+                df = self.kline_manager.get_klines(
+                    symbol=symbol,
+                    interval=interval,
+                    start_time=start_time,
+                    end_time=end_time,
+                    force_refresh=force_refresh
+                )
+                
+                if df is not None and not df.empty:
+                    # 数据质量检查
+                    if quality_check and self.enable_quality_check:
+                        try:
+                            cleaned_df, quality_report = self.quality_manager.process_data(
+                                data=df,
+                                symbol=symbol,
+                                timeframe=interval,
+                                expected_interval=interval,
+                                auto_clean=True
+                            )
+                            
+                            # 保存质量报告
+                            self.quality_reports.append(quality_report)
+                            
+                            # 记录质量信息
+                            if quality_report.score < 90:
+                                print(f"数据质量警告 {symbol} {interval}: 评分 {quality_report.score:.1f}/100, "
+                                      f"问题 {len(quality_report.issues)} 个")
+                            
+                            df = cleaned_df
+                            
+                        except Exception as e:
+                            print(f"数据质量检查失败 {symbol} {interval}: {e}")
+                    
+                    return df
+                    
+            except Exception as e:
+                print(f"KlineDataManager获取数据失败，回退到传统方式: {e}")
+        
+        # 传统方式获取数据
         # 生成缓存键
         cache_key = f"{symbol}_{interval}_{start_time}_{end_time}_{limit}"
         
         # 检查缓存
-        if use_cache and cache_key in self.cache:
+        if use_cache and not force_refresh and cache_key in self.cache:
             last_time = self.last_cache_time.get(cache_key)
             if last_time and (datetime.now() - last_time).seconds < self.cache_expire_time:
                 return self.cache[cache_key].copy()
@@ -637,6 +726,30 @@ class DataManager:
         
         # 获取数据
         df = data_provider.get_historical_klines(symbol, interval, start_time, end_time, limit)
+        
+        # 数据质量检查和清洗
+        if quality_check and self.enable_quality_check and not df.empty:
+            try:
+                cleaned_df, quality_report = self.quality_manager.process_data(
+                    data=df,
+                    symbol=symbol,
+                    timeframe=interval,
+                    expected_interval=interval,
+                    auto_clean=True
+                )
+                
+                # 保存质量报告
+                self.quality_reports.append(quality_report)
+                
+                # 记录质量信息
+                if quality_report.score < 90:
+                    print(f"数据质量警告 {symbol} {interval}: 评分 {quality_report.score:.1f}/100, "
+                          f"问题 {len(quality_report.issues)} 个")
+                
+                df = cleaned_df
+                
+            except Exception as e:
+                print(f"数据质量检查失败 {symbol} {interval}: {e}")
         
         # 缓存数据
         if use_cache and not df.empty:
@@ -683,8 +796,57 @@ class DataManager:
     
     def get_cache_info(self) -> Dict[str, Any]:
         """获取缓存信息"""
-        return {
-            'cache_count': len(self.cache),
-            'cache_keys': list(self.cache.keys()),
-            'cache_expire_time': self.cache_expire_time
+        cache_info = {
+            'traditional_cache': {
+                'cache_count': len(self.cache),
+                'cache_keys': list(self.cache.keys()),
+                'cache_expire_time': self.cache_expire_time
+            },
+            'kline_manager_enabled': self.use_kline_manager
         }
+        
+        # 如果使用KlineDataManager，获取其缓存信息
+        if self.use_kline_manager and self.kline_manager:
+            try:
+                kline_cache_info = self.kline_manager.get_cache_info()
+                cache_info['kline_manager_cache'] = kline_cache_info
+            except Exception as e:
+                cache_info['kline_manager_cache'] = f"获取失败: {e}"
+        
+        return cache_info
+    
+    def get_quality_summary(self) -> Dict[str, Any]:
+        """获取数据质量汇总信息"""
+        if not self.enable_quality_check or not self.quality_reports:
+            return {'quality_check_enabled': self.enable_quality_check, 'reports_count': 0}
+        
+        return self.quality_manager.get_quality_summary()
+    
+    def get_latest_quality_report(self, symbol: Optional[str] = None) -> Optional[QualityReport]:
+        """
+        获取最新的质量报告
+        
+        Args:
+            symbol: 交易对符号，如果为None则返回最新的任何报告
+            
+        Returns:
+            Optional[QualityReport]: 最新的质量报告
+        """
+        if not self.quality_reports:
+            return None
+        
+        if symbol:
+            # 查找指定交易对的最新报告
+            symbol_reports = [r for r in self.quality_reports if r.symbol == symbol]
+            if symbol_reports:
+                return max(symbol_reports, key=lambda r: r.timestamp)
+            return None
+        else:
+            # 返回最新的报告
+            return max(self.quality_reports, key=lambda r: r.timestamp)
+    
+    def export_quality_report(self, report: QualityReport, format: str = 'dict') -> Any:
+        """导出质量报告"""
+        if not self.enable_quality_check:
+            return None
+        return self.quality_manager.export_report(report, format)

@@ -1,0 +1,50 @@
+{
+  "BTCUSDT_1h": {
+    "symbol": "BTCUSDT",
+    "interval": "1h",
+    "records_count": 310,
+    "start_time": "2025-07-02T11:00:00",
+    "end_time": "2025-07-15T08:00:00",
+    "last_updated": "2025-07-15T16:28:59.766648"
+  },
+  "BTCUSDT_1d": {
+    "symbol": "BTCUSDT",
+    "interval": "1d",
+    "records_count": 14,
+    "start_time": "2025-07-02T00:00:00",
+    "end_time": "2025-07-15T00:00:00",
+    "last_updated": "2025-07-15T16:29:02.362018"
+  },
+  "ETHUSDT_1h": {
+    "symbol": "ETHUSDT",
+    "interval": "1h",
+    "records_count": 310,
+    "start_time": "2025-07-02T11:00:00",
+    "end_time": "2025-07-15T08:00:00",
+    "last_updated": "2025-07-15T16:29:14.424884"
+  },
+  "ETHUSDT_1d": {
+    "symbol": "ETHUSDT",
+    "interval": "1d",
+    "records_count": 14,
+    "start_time": "2025-07-02T00:00:00",
+    "end_time": "2025-07-15T00:00:00",
+    "last_updated": "2025-07-15T16:29:17.236797"
+  },
+  "SOLUSDT_1h": {
+    "symbol": "SOLUSDT",
+    "interval": "1h",
+    "records_count": 310,
+    "start_time": "2025-07-02T11:00:00",
+    "end_time": "2025-07-15T08:00:00",
+    "last_updated": "2025-07-15T16:29:29.469916"
+  },
+  "SOLUSDT_1d": {
+    "symbol": "SOLUSDT",
+    "interval": "1d",
+    "records_count": 14,
+    "start_time": "2025-07-02T00:00:00",
+    "end_time": "2025-07-15T00:00:00",
+    "last_updated": "2025-07-15T16:29:32.092376"
+  }
+}
