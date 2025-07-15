@@ -43,13 +43,15 @@ trading:
     - "BTCUSDT"
     - "ETHUSDT"
     - "BNBUSDT"
+    - "SOLUSDT"
+    - "DOGEUSDT"
+    - "PEPEUSDT"
     - "ADAUSDT"
     - "DOTUSDT"
     - "LINKUSDT"
     - "LTCUSDT"
     - "XRPUSDT"
     - "BCHUSDT"
-    - "EOSUSDT"
     
   # 支持的时间周期
   supported_timeframes:
@@ -65,30 +67,108 @@ trading:
 # 策略配置
 strategies:
   # 策略管理
-  max_active_strategies: 5             # 最大活跃策略数
+  max_active_strategies: 10            # 最大活跃策略数
   strategy_timeout: 300                # 策略超时时间（秒）
   
-  # 均值回归策略配置
+  # 多策略配置（列表格式）
+  multi_strategies:
+    # BTC均值回归策略
+    - name: "btc_mean_reversion"
+      class: "MeanReversion"
+      symbol: "BTCUSDT"
+      interval: "1h"
+      parameters:
+        ma_period: 20
+        deviation_threshold: 0.01
+        min_volume: 10
+      risk_management:
+        max_position_percent: 0.15
+        stop_loss_percent: 0.02
+        take_profit_percent: 0.04
+    
+    # ETH均值回归策略
+    - name: "eth_mean_reversion"
+      class: "MeanReversion"
+      symbol: "ETHUSDT"
+      interval: "1h"
+      parameters:
+        ma_period: 20
+        deviation_threshold: 0.01
+        min_volume: 10
+      risk_management:
+        max_position_percent: 0.15
+        stop_loss_percent: 0.02
+        take_profit_percent: 0.04
+    
+    # BNB均值回归策略
+    - name: "bnb_mean_reversion"
+      class: "MeanReversion"
+      symbol: "BNBUSDT"
+      interval: "1h"
+      parameters:
+        ma_period: 20
+        deviation_threshold: 0.01
+        min_volume: 10
+      risk_management:
+        max_position_percent: 0.10
+        stop_loss_percent: 0.025
+        take_profit_percent: 0.05
+    
+    # SOL均值回归策略
+    - name: "sol_mean_reversion"
+      class: "MeanReversion"
+      symbol: "SOLUSDT"
+      interval: "1h"
+      parameters:
+        ma_period: 20
+        deviation_threshold: 0.015
+        min_volume: 10
+      risk_management:
+        max_position_percent: 0.10
+        stop_loss_percent: 0.03
+        take_profit_percent: 0.06
+    
+    # DOGE均值回归策略
+    - name: "doge_mean_reversion"
+      class: "MeanReversion"
+      symbol: "DOGEUSDT"
+      interval: "30m"
+      parameters:
+        ma_period: 20
+        deviation_threshold: 0.02
+        min_volume: 10
+      risk_management:
+        max_position_percent: 0.08
+        stop_loss_percent: 0.04
+        take_profit_percent: 0.08
+    
+    # PEPE均值回归策略
+    - name: "pepe_mean_reversion"
+      class: "MeanReversion"
+      symbol: "PEPEUSDT"
+      interval: "15m"
+      parameters:
+        ma_period: 20
+        deviation_threshold: 0.025
+        min_volume: 10
+      risk_management:
+        max_position_percent: 0.05
+        stop_loss_percent: 0.05
+        take_profit_percent: 0.10
+  
+  # 兼容性：保留原有配置格式
   mean_reversion:
     enabled: true                      # 是否启用
     symbol: "BTCUSDT"                  # 交易对
     timeframe: "1h"                    # 时间周期
     parameters:
       ma_period: 20                    # 移动平均线周期
-      deviation_threshold: 0.02        # 偏离阈值
-      min_volume: 1000                 # 最小成交量
+      deviation_threshold: 0.01        # 偏离阈值
+      min_volume: 10                   # 最小成交量
     risk_management:
       max_position_percent: 0.1        # 最大仓位比例
       stop_loss_percent: 0.02          # 止损比例
       take_profit_percent: 0.04        # 止盈比例
-      
-  # 可以在这里添加更多策略配置
-  # momentum_strategy:
-  #   enabled: false
-  #   symbol: "ETHUSDT"
-  #   timeframe: "5m"
-  #   parameters:
-  #     ...
     
 # 风险管理配置
 risk_management:

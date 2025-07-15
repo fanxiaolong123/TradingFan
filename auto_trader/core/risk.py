@@ -681,3 +681,330 @@ class RiskManager:
             'risk_limits': self.risk_limits.to_dict(),
             'report_time': datetime.now().isoformat()
         }
+    
+    def calculate_var(self, account_manager: AccountManager, confidence_level: float = 0.95, 
+                     time_horizon_days: int = 1) -> float:
+        """
+        计算风险价值（VaR）
+        
+        Args:
+            account_manager: 账户管理器
+            confidence_level: 置信度，默认95%
+            time_horizon_days: 时间范围（天），默认1天
+            
+        Returns:
+            float: VaR值（USDT）
+        """
+        if len(account_manager.daily_values) < 30:
+            return 0.0
+        
+        # 计算日收益率
+        daily_returns = []
+        for i in range(1, len(account_manager.daily_values)):
+            prev_value = account_manager.daily_values[i-1]['total_value']
+            curr_value = account_manager.daily_values[i]['total_value']
+            if prev_value > 0:
+                daily_return = (curr_value - prev_value) / prev_value
+                daily_returns.append(daily_return)
+        
+        if len(daily_returns) < 10:
+            return 0.0
+        
+        # 计算VaR
+        returns_array = np.array(daily_returns)
+        var_percentile = 100 * (1 - confidence_level)
+        var_return = np.percentile(returns_array, var_percentile)
+        
+        # 转换为绝对金额
+        current_value = account_manager.get_account_summary().get('total_value_usdt', 0)
+        var_amount = abs(var_return * current_value * np.sqrt(time_horizon_days))
+        
+        return var_amount
+    
+    def calculate_expected_shortfall(self, account_manager: AccountManager, confidence_level: float = 0.95) -> float:
+        """
+        计算预期损失（Expected Shortfall/CVaR）
+        
+        Args:
+            account_manager: 账户管理器
+            confidence_level: 置信度，默认95%
+            
+        Returns:
+            float: 预期损失值（USDT）
+        """
+        if len(account_manager.daily_values) < 30:
+            return 0.0
+        
+        # 计算日收益率
+        daily_returns = []
+        for i in range(1, len(account_manager.daily_values)):
+            prev_value = account_manager.daily_values[i-1]['total_value']
+            curr_value = account_manager.daily_values[i]['total_value']
+            if prev_value > 0:
+                daily_return = (curr_value - prev_value) / prev_value
+                daily_returns.append(daily_return)
+        
+        if len(daily_returns) < 10:
+            return 0.0
+        
+        # 计算CVaR
+        returns_array = np.array(daily_returns)
+        var_percentile = 100 * (1 - confidence_level)
+        var_return = np.percentile(returns_array, var_percentile)
+        
+        # 计算超过VaR的平均损失
+        tail_returns = returns_array[returns_array <= var_return]
+        if len(tail_returns) == 0:
+            return 0.0
+        
+        expected_shortfall_return = np.mean(tail_returns)
+        
+        # 转换为绝对金额
+        current_value = account_manager.get_account_summary().get('total_value_usdt', 0)
+        expected_shortfall_amount = abs(expected_shortfall_return * current_value)
+        
+        return expected_shortfall_amount
+    
+    def calculate_portfolio_beta(self, account_manager: AccountManager, benchmark_returns: List[float]) -> float:
+        """
+        计算投资组合贝塔系数
+        
+        Args:
+            account_manager: 账户管理器
+            benchmark_returns: 基准收益率列表
+            
+        Returns:
+            float: 贝塔系数
+        """
+        if len(account_manager.daily_values) < 30 or len(benchmark_returns) < 30:
+            return 1.0
+        
+        # 计算投资组合收益率
+        portfolio_returns = []
+        for i in range(1, len(account_manager.daily_values)):
+            prev_value = account_manager.daily_values[i-1]['total_value']
+            curr_value = account_manager.daily_values[i]['total_value']
+            if prev_value > 0:
+                portfolio_return = (curr_value - prev_value) / prev_value
+                portfolio_returns.append(portfolio_return)
+        
+        # 确保两个序列长度相同
+        min_length = min(len(portfolio_returns), len(benchmark_returns))
+        portfolio_returns = portfolio_returns[-min_length:]
+        benchmark_returns = benchmark_returns[-min_length:]
+        
+        if min_length < 10:
+            return 1.0
+        
+        # 计算贝塔系数
+        portfolio_array = np.array(portfolio_returns)
+        benchmark_array = np.array(benchmark_returns)
+        
+        covariance = np.cov(portfolio_array, benchmark_array)[0, 1]
+        benchmark_variance = np.var(benchmark_array)
+        
+        if benchmark_variance == 0:
+            return 1.0
+        
+        beta = covariance / benchmark_variance
+        return beta
+    
+    def calculate_sharpe_ratio(self, account_manager: AccountManager, risk_free_rate: float = 0.03) -> float:
+        """
+        计算夏普比率
+        
+        Args:
+            account_manager: 账户管理器
+            risk_free_rate: 无风险利率，默认3%
+            
+        Returns:
+            float: 夏普比率
+        """
+        if len(account_manager.daily_values) < 30:
+            return 0.0
+        
+        # 计算年化收益率
+        first_value = account_manager.daily_values[0]['total_value']
+        last_value = account_manager.daily_values[-1]['total_value']
+        days = len(account_manager.daily_values)
+        
+        if first_value <= 0 or days <= 0:
+            return 0.0
+        
+        annualized_return = (last_value / first_value) ** (365 / days) - 1
+        
+        # 计算日收益率
+        daily_returns = []
+        for i in range(1, len(account_manager.daily_values)):
+            prev_value = account_manager.daily_values[i-1]['total_value']
+            curr_value = account_manager.daily_values[i]['total_value']
+            if prev_value > 0:
+                daily_return = (curr_value - prev_value) / prev_value
+                daily_returns.append(daily_return)
+        
+        if len(daily_returns) < 10:
+            return 0.0
+        
+        # 计算年化波动率
+        daily_std = np.std(daily_returns)
+        annualized_volatility = daily_std * np.sqrt(365)
+        
+        if annualized_volatility == 0:
+            return 0.0
+        
+        # 计算夏普比率
+        excess_return = annualized_return - risk_free_rate
+        sharpe_ratio = excess_return / annualized_volatility
+        
+        return sharpe_ratio
+    
+    def calculate_sortino_ratio(self, account_manager: AccountManager, risk_free_rate: float = 0.03) -> float:
+        """
+        计算索提诺比率
+        
+        Args:
+            account_manager: 账户管理器
+            risk_free_rate: 无风险利率，默认3%
+            
+        Returns:
+            float: 索提诺比率
+        """
+        if len(account_manager.daily_values) < 30:
+            return 0.0
+        
+        # 计算年化收益率
+        first_value = account_manager.daily_values[0]['total_value']
+        last_value = account_manager.daily_values[-1]['total_value']
+        days = len(account_manager.daily_values)
+        
+        if first_value <= 0 or days <= 0:
+            return 0.0
+        
+        annualized_return = (last_value / first_value) ** (365 / days) - 1
+        
+        # 计算下行偏差
+        daily_returns = []
+        for i in range(1, len(account_manager.daily_values)):
+            prev_value = account_manager.daily_values[i-1]['total_value']
+            curr_value = account_manager.daily_values[i]['total_value']
+            if prev_value > 0:
+                daily_return = (curr_value - prev_value) / prev_value
+                daily_returns.append(daily_return)
+        
+        if len(daily_returns) < 10:
+            return 0.0
+        
+        # 计算下行偏差（只考虑负收益）
+        negative_returns = [r for r in daily_returns if r < 0]
+        if len(negative_returns) == 0:
+            return float('inf')  # 没有负收益
+        
+        downside_deviation = np.std(negative_returns) * np.sqrt(365)
+        
+        if downside_deviation == 0:
+            return float('inf')
+        
+        # 计算索提诺比率
+        excess_return = annualized_return - risk_free_rate
+        sortino_ratio = excess_return / downside_deviation
+        
+        return sortino_ratio
+    
+    def calculate_calmar_ratio(self, account_manager: AccountManager) -> float:
+        """
+        计算卡尔马比率
+        
+        Args:
+            account_manager: 账户管理器
+            
+        Returns:
+            float: 卡尔马比率
+        """
+        if len(account_manager.daily_values) < 30:
+            return 0.0
+        
+        # 计算年化收益率
+        first_value = account_manager.daily_values[0]['total_value']
+        last_value = account_manager.daily_values[-1]['total_value']
+        days = len(account_manager.daily_values)
+        
+        if first_value <= 0 or days <= 0:
+            return 0.0
+        
+        annualized_return = (last_value / first_value) ** (365 / days) - 1
+        
+        # 计算最大回撤
+        values = [day['total_value'] for day in account_manager.daily_values]
+        max_drawdown = 0.0
+        peak_value = values[0]
+        
+        for value in values:
+            if value > peak_value:
+                peak_value = value
+            else:
+                drawdown = (peak_value - value) / peak_value
+                max_drawdown = max(max_drawdown, drawdown)
+        
+        if max_drawdown == 0:
+            return float('inf')
+        
+        # 计算卡尔马比率
+        calmar_ratio = annualized_return / max_drawdown
+        
+        return calmar_ratio
+    
+    def check_strategy_correlation(self, strategies_performance: Dict[str, List[float]]) -> Dict[str, float]:
+        """
+        检查策略间相关性
+        
+        Args:
+            strategies_performance: 各策略的收益率序列
+            
+        Returns:
+            Dict[str, float]: 策略间相关性矩阵
+        """
+        correlations = {}
+        strategy_names = list(strategies_performance.keys())
+        
+        for i, strategy1 in enumerate(strategy_names):
+            for j, strategy2 in enumerate(strategy_names):
+                if i < j:  # 避免重复计算
+                    returns1 = strategies_performance[strategy1]
+                    returns2 = strategies_performance[strategy2]
+                    
+                    if len(returns1) > 10 and len(returns2) > 10:
+                        # 确保两个序列长度相同
+                        min_length = min(len(returns1), len(returns2))
+                        returns1 = returns1[-min_length:]
+                        returns2 = returns2[-min_length:]
+                        
+                        correlation = np.corrcoef(returns1, returns2)[0, 1]
+                        correlations[f"{strategy1}_{strategy2}"] = correlation
+        
+        return correlations
+    
+    def get_advanced_risk_metrics(self, account_manager: AccountManager) -> Dict[str, Any]:
+        """
+        获取高级风险指标
+        
+        Args:
+            account_manager: 账户管理器
+            
+        Returns:
+            Dict[str, Any]: 高级风险指标
+        """
+        metrics = {
+            'var_95': self.calculate_var(account_manager, 0.95),
+            'var_99': self.calculate_var(account_manager, 0.99),
+            'expected_shortfall_95': self.calculate_expected_shortfall(account_manager, 0.95),
+            'expected_shortfall_99': self.calculate_expected_shortfall(account_manager, 0.99),
+            'sharpe_ratio': self.calculate_sharpe_ratio(account_manager),
+            'sortino_ratio': self.calculate_sortino_ratio(account_manager),
+            'calmar_ratio': self.calculate_calmar_ratio(account_manager),
+            'current_drawdown': self.risk_metrics.current_drawdown_percent,
+            'market_volatility': self.risk_metrics.market_volatility,
+            'position_concentration': self.risk_metrics.position_concentration,
+            'calculation_time': datetime.now().isoformat()
+        }
+        
+        return metrics

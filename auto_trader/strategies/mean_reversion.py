@@ -163,36 +163,41 @@ class MeanReversionStrategy(Strategy):
         """
         signals = []
         
-        # 检查成交量是否满足要求
-        if current_volume < self.min_volume:
-            return signals
-        
-        # 检查是否在冷却期内
-        if self.bars_since_last_signal < self.signal_cooldown_bars:
-            return signals
-        
         # 计算价格偏离度
         deviation = (current_price - ma_value) / ma_value
         upper_threshold = self.deviation_threshold
         lower_threshold = -self.deviation_threshold
+        
+        # 调试输出
+        print(f"[DEBUG] 价格: {current_price:.2f}, 均线: {ma_value:.2f}, 偏离度: {deviation:.4f}, 阈值: ±{self.deviation_threshold:.4f}")
+        print(f"[DEBUG] 成交量: {current_volume:.2f}, 最小成交量: {self.min_volume}")
+        print(f"[DEBUG] 持仓: {self.position}, 冷却期: {self.bars_since_last_signal}/{self.signal_cooldown_bars}")
+        
+        # 检查成交量是否满足要求
+        if current_volume < self.min_volume:
+            print(f"[DEBUG] 成交量不足: {current_volume} < {self.min_volume}")
+            return signals
+        
+        # 暂时禁用冷却期以便测试
+        # if self.bars_since_last_signal < self.signal_cooldown_bars and len(self.signal_history) > 0:
+        #     print(f"[DEBUG] 冷却期内: {self.bars_since_last_signal} < {self.signal_cooldown_bars}")
+        #     return signals
         
         # 生成买入信号：价格显著低于均线且当前无多仓
         if (deviation <= lower_threshold and 
             self.position <= 0 and 
             self.last_signal_type != SignalType.BUY):
             
-            # 计算止损和止盈价格
-            stop_loss_price = current_price * (1 - self.config.stop_loss_percent)
-            take_profit_price = current_price * (1 + self.config.take_profit_percent)
+            print(f"[DEBUG] 生成买入信号: 偏离度 {deviation:.4f} <= {lower_threshold:.4f}")
             
             signal = self.create_signal(
                 signal_type=SignalType.BUY,
-                price=None,  # 市价买入
-                quantity_percent=self.config.max_position_percent,
+                price=current_price,  # 使用当前价格
+                quantity_percent=0.1,  # 使用10%的资金
                 order_type=OrderType.MARKET,
-                stop_loss=stop_loss_price,
-                take_profit=take_profit_price,
-                confidence=min(abs(deviation) / upper_threshold, 1.0),  # 偏离越大置信度越高
+                stop_loss=None,  # 暂时不设止损
+                take_profit=None,  # 暂时不设止盈
+                confidence=min(abs(deviation) / upper_threshold, 1.0),
                 metadata={
                     'ma_value': ma_value,
                     'deviation': deviation,
@@ -208,9 +213,11 @@ class MeanReversionStrategy(Strategy):
               self.position > 0 and 
               self.last_signal_type != SignalType.SELL):
             
+            print(f"[DEBUG] 生成卖出信号: 偏离度 {deviation:.4f} >= {upper_threshold:.4f}")
+            
             signal = self.create_signal(
                 signal_type=SignalType.SELL,
-                price=None,  # 市价卖出
+                price=current_price,
                 quantity_percent=1.0,  # 全部平仓
                 order_type=OrderType.MARKET,
                 confidence=min(deviation / upper_threshold, 1.0),
@@ -230,13 +237,16 @@ class MeanReversionStrategy(Strategy):
               self.position != 0 and 
               self.entry_price is not None):
             
+            print(f"[DEBUG] 检查平仓条件: 偏离度 {abs(deviation):.4f} <= {upper_threshold * 0.3:.4f}")
+            
             # 计算当前盈亏
             if self.position > 0:  # 多仓
                 profit_pct = (current_price - self.entry_price) / self.entry_price
+                print(f"[DEBUG] 多仓盈亏: {profit_pct:.4f}")
                 if profit_pct > 0.005:  # 盈利超过0.5%才平仓
                     signal = self.create_signal(
                         signal_type=SignalType.SELL,
-                        price=None,
+                        price=current_price,
                         quantity_percent=1.0,
                         order_type=OrderType.MARKET,
                         confidence=0.8,
@@ -248,6 +258,9 @@ class MeanReversionStrategy(Strategy):
                         }
                     )
                     signals.append(signal)
+        
+        if not signals:
+            print(f"[DEBUG] 无信号生成")
         
         return signals
     
